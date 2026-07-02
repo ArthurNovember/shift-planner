@@ -1,9 +1,11 @@
-import type { Assignment, Employee, ScheduleWarning, ShiftDefinition, UnavailabilityMap } from './types';
+import type { Assignment, Employee, ScheduleOptions, ScheduleWarning, ShiftDefinition, UnavailabilityMap } from './types';
 import {
   FT_SHORT_WEEK_REDUCTION,
   FT_TOGETHER_CHANCE,
   FULLTIME_TARGET_HOURS,
   PARTTIME_MONTHLY_CAP,
+  PT_REGULAR_LONG_WEEK_SHIFTS,
+  PT_SHORT_WEEK_REDUCTION,
   SHIFTS,
   WEEKEND_SHIFT,
 } from './types';
@@ -47,6 +49,7 @@ export function generateSchedule(
   month: number,
   employees: Employee[],
   unavailability: UnavailabilityMap = {},
+  options: ScheduleOptions = {},
 ): Assignment[] {
   const assignments: Assignment[] = [];
   const fulltime = employees.filter((e) => e.type === 'fulltime');
@@ -266,6 +269,64 @@ export function generateSchedule(
     return true;
   }
 
+  // --- Regularity mode: give each part-timer a fixed recurring weekly morning pattern instead
+  //     of the greedy fill below, so their shifts land on the same weekdays every week. The
+  //     two patterns never overlap the same date - whoever isn't scheduled that day is always
+  //     free to step in if a fulltime gap lands on it, without doubling anyone up. Since two
+  //     equal quotas can't both fit a 5-day week without overlap, priority alternates monthly
+  //     so it averages out fair over time. Deliberately a light, fixed quota (not a hunt for
+  //     80h) - reaching the cap on morning-only shifts would mean working nearly every
+  //     weekday, which defeats the point of a genuinely regular, lighter rhythm. ---
+  if (parttime.length > 0 && options.ptRegularityMode) {
+    const ptDayTargets = new Map<string, { longShifts: number; shortShifts: number }>();
+    parttime.forEach((emp) => {
+      const longShifts = PT_REGULAR_LONG_WEEK_SHIFTS;
+      const shortShifts = Math.max(0, longShifts - PT_SHORT_WEEK_REDUCTION);
+      ptDayTargets.set(emp.id, { longShifts, shortShifts });
+    });
+
+    const priorityIndex = monthIndex % parttime.length;
+    const claimOrder = parttime
+      .map((_, i) => i)
+      .sort((a, b) => (a - priorityIndex + parttime.length) % parttime.length - ((b - priorityIndex + parttime.length) % parttime.length));
+
+    orderedWeekKeys.forEach((weekKey) => {
+      const weekdays = weekdaysByWeekKey.get(weekKey)!;
+      const claimedThisWeek = new Set<string>();
+
+      claimOrder.forEach((empIndex) => {
+        const emp = parttime[empIndex];
+        const available = weekdays.filter(
+          (d) => !isUnavailable(emp.id, toISODate(d)) && !claimedThisWeek.has(toISODate(d)),
+        );
+        const { longShifts, shortShifts } = ptDayTargets.get(emp.id)!;
+        let kept: Date[];
+        if (isShortWeek(emp.id, weekKey)) {
+          // Their own weekend week: rest around it by keeping the middle days only.
+          const target = Math.min(available.length, shortShifts);
+          const offCount = Math.max(0, available.length - target);
+          kept = [...available];
+          for (let i = 0; i < offCount; i++) {
+            if (i % 2 === 0) kept.pop();
+            else kept.shift();
+          }
+        } else {
+          // Regular week: this person anchors to the same side of the week every time.
+          const target = Math.min(available.length, longShifts);
+          kept = empIndex % 2 === 0 ? available.slice(0, target) : available.slice(available.length - target);
+        }
+        kept.forEach((d) => {
+          const iso = toISODate(d);
+          claimedThisWeek.add(iso);
+          assignments.push({ date: iso, employeeId: emp.id, shift: SHIFTS.parttime.morning });
+          ptTakenSlots.add(`${iso}-morning`);
+          ptHours.set(emp.id, (ptHours.get(emp.id) ?? 0) + SHIFTS.parttime.morning.hours);
+          ptDatesWorked.get(emp.id)!.add(iso);
+        });
+      });
+    });
+  }
+
   if (parttime.length > 0) {
     // Priority 1: cover gaps left by fulltime's short week (mandatory coverage - allowed to
     // double someone up or slip past the cap as a last resort, since the shift must be covered)
@@ -279,11 +340,14 @@ export function generateSchedule(
     // the morning - spreading across the month until every part-timer nears the cap. The
     // afternoon is never doubled up, so it only gets filled here through leftover gaps above.
     // Optional, so a day is simply skipped rather than giving someone a second shift that day.
-    orderedWeekKeys.forEach((weekKey) => {
-      weekdaysByWeekKey.get(weekKey)!.forEach((d) => {
-        assignPtSlot(toISODate(d), 'morning', true, false);
+    // Skipped in regularity mode, since the fixed pattern above already covers their hours.
+    if (!options.ptRegularityMode) {
+      orderedWeekKeys.forEach((weekKey) => {
+        weekdaysByWeekKey.get(weekKey)!.forEach((d) => {
+          assignPtSlot(toISODate(d), 'morning', true, false);
+        });
       });
-    });
+    }
   }
 
   return assignments;

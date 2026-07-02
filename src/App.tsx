@@ -37,6 +37,7 @@ function App() {
   const [month, setMonth] = useState(today.getMonth());
   const [schedules, setSchedules] = useState<SchedulesMap>(() => loadSchedules());
   const [unavailability, setUnavailability] = useState<UnavailabilityMap>(() => loadUnavailability());
+  const [ptRegularityMode, setPtRegularityMode] = useState(false);
 
   useEffect(() => saveEmployees(employees), [employees]);
   useEffect(() => saveSchedules(schedules), [schedules]);
@@ -60,7 +61,7 @@ function App() {
       const confirmed = window.confirm('Pro tento měsíc už existuje rozvrh. Vygenerovat znovu a přepsat ruční úpravy?');
       if (!confirmed) return;
     }
-    setAssignments(generateSchedule(year, month, employees, unavailability));
+    setAssignments(generateSchedule(year, month, employees, unavailability, { ptRegularityMode }));
   }
 
   function handleToggleUnavailable(employeeId: string, iso: string) {
@@ -128,6 +129,14 @@ function App() {
           <button type="button" className="icon-btn" onClick={() => changeMonth(1)} aria-label="Další měsíc">
             ›
           </button>
+          <label className="regularity-toggle">
+            <input
+              type="checkbox"
+              checked={ptRegularityMode}
+              onChange={(e) => setPtRegularityMode(e.target.checked)}
+            />
+            Pravidelné směny pro poloviční úvazek
+          </label>
           <button type="button" className="primary-btn" onClick={handleGenerate}>
             {assignments.length > 0 ? 'Vygenerovat znovu' : 'Vygenerovat rozvrh'}
           </button>

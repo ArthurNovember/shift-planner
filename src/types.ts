@@ -70,5 +70,19 @@ export const FT_SHORT_WEEK_REDUCTION = 2;
  * gap for part-time to cover, same as any other short-week gap. */
 export const FT_TOGETHER_CHANCE = 0.1;
 
+/** In part-time "regularity mode", how many fixed morning shifts a normal week gets. Kept
+ * deliberately light (not hunting for the 80h cap) so the pattern stays genuinely regular. */
+export const PT_REGULAR_LONG_WEEK_SHIFTS = 3;
+
+/** In part-time "regularity mode", a week where the employee covers the weekend gets this
+ * many fewer morning shifts, so they rest around it like fulltime does. */
+export const PT_SHORT_WEEK_REDUCTION = 2;
+
 /** employeeId -> set of ISO dates that employee cannot work. */
 export type UnavailabilityMap = Record<string, Set<string>>;
+
+export interface ScheduleOptions {
+  /** Give each part-timer a fixed recurring weekly morning pattern instead of the default
+   * greedy hour-filling, so their shifts land on the same weekdays every week. */
+  ptRegularityMode?: boolean;
+}
