@@ -65,5 +65,10 @@ export const FULLTIME_TARGET_HOURS = 160;
  * to balance out that extra weekend load and give them a real rest around it. */
 export const FT_SHORT_WEEK_REDUCTION = 2;
 
+/** On a day both fulltime employees are scheduled, this is the chance they both take the
+ * same shift (instead of always splitting morning/afternoon) - the other shift becomes a
+ * gap for part-time to cover, same as any other short-week gap. */
+export const FT_TOGETHER_CHANCE = 0.1;
+
 /** employeeId -> set of ISO dates that employee cannot work. */
 export type UnavailabilityMap = Record<string, Set<string>>;

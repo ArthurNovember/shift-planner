@@ -1,5 +1,12 @@
 import type { Assignment, Employee, ScheduleWarning, ShiftDefinition, UnavailabilityMap } from './types';
-import { FT_SHORT_WEEK_REDUCTION, FULLTIME_TARGET_HOURS, PARTTIME_MONTHLY_CAP, SHIFTS, WEEKEND_SHIFT } from './types';
+import {
+  FT_SHORT_WEEK_REDUCTION,
+  FT_TOGETHER_CHANCE,
+  FULLTIME_TARGET_HOURS,
+  PARTTIME_MONTHLY_CAP,
+  SHIFTS,
+  WEEKEND_SHIFT,
+} from './types';
 
 /** Which shift definitions make sense for this employee on a weekday vs. weekend day. */
 export function shiftOptionsFor(employee: Employee, isWeekend: boolean): ShiftDefinition[] {
@@ -164,12 +171,22 @@ export function generateSchedule(
 
       if (working.length >= 2) {
         const [first, second] = working;
-        const morningEmp = ftFlipCounter % 2 === 0 ? first : second;
-        const afternoonEmp = morningEmp === first ? second : first;
-        assignments.push({ date: iso, employeeId: morningEmp.id, shift: SHIFTS.fulltime.morning });
-        assignments.push({ date: iso, employeeId: afternoonEmp.id, shift: SHIFTS.fulltime.afternoon });
-        ftTakenSlots.add(`${iso}-morning`);
-        ftTakenSlots.add(`${iso}-afternoon`);
+        if (Math.random() < FT_TOGETHER_CHANCE) {
+          // Both take the same shift together; the other shift becomes a gap for part-time to cover.
+          const kind: 'morning' | 'afternoon' = Math.random() < 0.5 ? 'morning' : 'afternoon';
+          const gapKind = kind === 'morning' ? 'afternoon' : 'morning';
+          assignments.push({ date: iso, employeeId: first.id, shift: SHIFTS.fulltime[kind] });
+          assignments.push({ date: iso, employeeId: second.id, shift: SHIFTS.fulltime[kind] });
+          ftTakenSlots.add(`${iso}-${kind}`);
+          gaps.push({ date: iso, kind: gapKind });
+        } else {
+          const morningEmp = ftFlipCounter % 2 === 0 ? first : second;
+          const afternoonEmp = morningEmp === first ? second : first;
+          assignments.push({ date: iso, employeeId: morningEmp.id, shift: SHIFTS.fulltime.morning });
+          assignments.push({ date: iso, employeeId: afternoonEmp.id, shift: SHIFTS.fulltime.afternoon });
+          ftTakenSlots.add(`${iso}-morning`);
+          ftTakenSlots.add(`${iso}-afternoon`);
+        }
         ftFlipCounter++;
       } else if (working.length === 1) {
         const emp = working[0];
