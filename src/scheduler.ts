@@ -158,6 +158,23 @@ export function generateSchedule(
     });
   });
 
+  // Safety net: the opposite-end trimming only avoids both being off the same day when both
+  // start from the same full week. Personal unavailability can still knock both out on one
+  // date - if that happens and at least one of them is actually free that day, pull them back
+  // in rather than leaving the day to part-time alone (part-time morning ends at 13:00 and
+  // afternoon doesn't start until 16:00, so a fulltime-free day leaves a real gap in between).
+  if (fulltime.length >= 2) {
+    orderedWeekKeys.forEach((weekKey) => {
+      weekdaysByWeekKey.get(weekKey)!.forEach((d) => {
+        const iso = toISODate(d);
+        const anyWorking = fulltime.some((emp) => ftWorkingDates.get(emp.id)!.has(iso));
+        if (anyWorking) return;
+        const availableEmp = fulltime.find((emp) => !isUnavailable(emp.id, iso));
+        if (availableEmp) ftWorkingDates.get(availableEmp.id)!.add(iso);
+      });
+    });
+  }
+
   // --- Assign fulltime morning/afternoon per weekday, tracking any gaps left for part-time to fill ---
   const gaps: { date: string; kind: 'morning' | 'afternoon' }[] = [];
   const ftTakenSlots = new Set<string>(); // `${date}-${kind}`, fulltime coverage only
