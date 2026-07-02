@@ -182,7 +182,12 @@ export function generateSchedule(
   const ptDatesWorked = new Map<string, Set<string>>(); // employeeId -> dates they already have a shift on
   parttime.forEach((emp) => ptDatesWorked.set(emp.id, new Set()));
 
-  function assignPtSlot(date: string, kind: 'morning' | 'afternoon', enforceCap: boolean): boolean {
+  function assignPtSlot(
+    date: string,
+    kind: 'morning' | 'afternoon',
+    enforceCap: boolean,
+    allowSameDayDouble: boolean,
+  ): boolean {
     const slotKey = `${date}-${kind}`;
     if (ptTakenSlots.has(slotKey)) return false;
     // The afternoon only ever has one person on duty: part-time can only take it when
@@ -196,9 +201,12 @@ export function generateSchedule(
       return true;
     });
     if (eligible.length === 0) return false;
-    // Prefer someone who doesn't already work that day, so one person doesn't get both shifts
+    // Nobody should work both shifts in one day - prefer someone who isn't already working
+    // that date. Only fall back to doubling someone up when the caller allows it (mandatory
+    // coverage gaps); optional support shifts skip the day entirely instead.
     const freshCandidates = eligible.filter((emp) => !ptDatesWorked.get(emp.id)!.has(date));
-    const candidates = freshCandidates.length > 0 ? freshCandidates : eligible;
+    const candidates = freshCandidates.length > 0 ? freshCandidates : allowSameDayDouble ? eligible : [];
+    if (candidates.length === 0) return false;
     const chosen = candidates.sort((a, b) => (ptHours.get(a.id) ?? 0) - (ptHours.get(b.id) ?? 0))[0];
     assignments.push({ date, employeeId: chosen.id, shift: SHIFTS.parttime[kind] });
     ptTakenSlots.add(slotKey);
@@ -208,18 +216,21 @@ export function generateSchedule(
   }
 
   if (parttime.length > 0) {
-    // Priority 1: cover gaps left by fulltime's short week (mandatory coverage, cap allowed to slip if needed)
+    // Priority 1: cover gaps left by fulltime's short week (mandatory coverage - allowed to
+    // double someone up or slip past the cap as a last resort, since the shift must be covered)
     gaps.forEach((gap) => {
-      const ok = assignPtSlot(gap.date, gap.kind, true);
-      if (!ok) assignPtSlot(gap.date, gap.kind, false);
+      let ok = assignPtSlot(gap.date, gap.kind, true, false);
+      if (!ok) ok = assignPtSlot(gap.date, gap.kind, false, false);
+      if (!ok) assignPtSlot(gap.date, gap.kind, false, true);
     });
 
     // Priority 2: keep adding morning support shifts - even on days fulltime already covers
     // the morning - spreading across the month until every part-timer nears the cap. The
     // afternoon is never doubled up, so it only gets filled here through leftover gaps above.
+    // Optional, so a day is simply skipped rather than giving someone a second shift that day.
     orderedWeekKeys.forEach((weekKey) => {
       weekdaysByWeekKey.get(weekKey)!.forEach((d) => {
-        assignPtSlot(toISODate(d), 'morning', true);
+        assignPtSlot(toISODate(d), 'morning', true, false);
       });
     });
   }
