@@ -167,21 +167,31 @@ export function generateSchedule(
   });
 
   const ptTakenSlots = new Set<string>(); // `${date}-${kind}`, prevents double-booking two part-timers on one slot
+  const ptDatesWorked = new Map<string, Set<string>>(); // employeeId -> dates they already have a shift on
+  parttime.forEach((emp) => ptDatesWorked.set(emp.id, new Set()));
 
   function assignPtSlot(date: string, kind: 'morning' | 'afternoon', enforceCap: boolean): boolean {
     const slotKey = `${date}-${kind}`;
     if (ptTakenSlots.has(slotKey)) return false;
+    // The afternoon only ever has one person on duty: part-time can only take it when
+    // fulltime isn't already covering that afternoon (a genuine gap). Mornings may overlap,
+    // since fulltime + part-time together during the morning is welcome extra support.
+    if (kind === 'afternoon' && ftTakenSlots.has(`${date}-afternoon`)) return false;
     const shiftHours = SHIFTS.parttime[kind].hours;
-    const candidates = parttime.filter((emp) => {
+    const eligible = parttime.filter((emp) => {
       if (isUnavailable(emp.id, date)) return false;
       if (enforceCap && (ptHours.get(emp.id) ?? 0) + shiftHours > PARTTIME_MONTHLY_CAP) return false;
       return true;
     });
-    if (candidates.length === 0) return false;
+    if (eligible.length === 0) return false;
+    // Prefer someone who doesn't already work that day, so one person doesn't get both shifts
+    const freshCandidates = eligible.filter((emp) => !ptDatesWorked.get(emp.id)!.has(date));
+    const candidates = freshCandidates.length > 0 ? freshCandidates : eligible;
     const chosen = candidates.sort((a, b) => (ptHours.get(a.id) ?? 0) - (ptHours.get(b.id) ?? 0))[0];
     assignments.push({ date, employeeId: chosen.id, shift: SHIFTS.parttime[kind] });
     ptTakenSlots.add(slotKey);
     ptHours.set(chosen.id, (ptHours.get(chosen.id) ?? 0) + shiftHours);
+    ptDatesWorked.get(chosen.id)!.add(date);
     return true;
   }
 
@@ -192,14 +202,12 @@ export function generateSchedule(
       if (!ok) assignPtSlot(gap.date, gap.kind, false);
     });
 
-    // Priority 2: keep adding support shifts - even on days fulltime already fully covers -
-    // spreading across the whole month until every part-timer is at (or just under) the cap
+    // Priority 2: keep adding morning support shifts - even on days fulltime already covers
+    // the morning - spreading across the month until every part-timer nears the cap. The
+    // afternoon is never doubled up, so it only gets filled here through leftover gaps above.
     orderedWeekKeys.forEach((weekKey) => {
       weekdaysByWeekKey.get(weekKey)!.forEach((d) => {
-        const iso = toISODate(d);
-        (['morning', 'afternoon'] as const).forEach((kind) => {
-          assignPtSlot(iso, kind, true);
-        });
+        assignPtSlot(toISODate(d), 'morning', true);
       });
     });
   }
