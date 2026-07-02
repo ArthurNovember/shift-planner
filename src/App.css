@@ -70,7 +70,7 @@
   display: grid;
   grid-template-columns: 320px 1fr;
   gap: 20px;
-  align-items: start;
+  align-items: stretch;
   margin-bottom: 20px;
 }
 
@@ -455,4 +455,73 @@ select {
   background: rgba(248, 113, 113, 0.18);
   border-color: #f87171;
   box-shadow: 0 0 6px rgba(248, 113, 113, 0.4);
+}
+
+/* Space scene filler */
+.space-scene {
+  flex: 1;
+  min-height: 240px;
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  background: radial-gradient(circle at 32% 38%, rgba(23, 182, 245, 0.1), transparent 65%);
+}
+
+.orbit-system {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 280px;
+  height: 280px;
+  transform: translate(-50%, -50%);
+}
+
+.orbit-core {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle at 35% 35%, #fff6d8, var(--gold) 55%, #92650a 100%);
+  box-shadow: 0 0 34px 8px rgba(251, 191, 36, 0.32);
+}
+
+.orbit-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border: 1px dashed rgba(23, 182, 245, 0.22);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  animation-name: orbit-spin;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+.orbit-ring .planet {
+  position: absolute;
+  top: 50%;
+  left: 100%;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+@keyframes orbit-spin {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orbit-ring {
+    animation: none;
+  }
 }

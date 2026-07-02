@@ -10,8 +10,10 @@ import {
   computeWarnings,
   generateSchedule,
   hoursBetween,
+  toISODate,
   totalHoursByEmployee,
 } from "./scheduler";
+import { employeeColor } from "./colors";
 import type { SchedulesMap } from "./storage";
 import {
   DEFAULT_EMPLOYEES,
@@ -28,6 +30,7 @@ import { WarningsPanel } from "./components/WarningsPanel";
 import { HoursSummary } from "./components/HoursSummary";
 import { CalendarGrid } from "./components/CalendarGrid";
 import { AvailabilityGrid } from "./components/AvailabilityGrid";
+import { SpaceScene } from "./components/SpaceScene";
 import "./App.css";
 
 const MONTH_NAMES = [
@@ -83,6 +86,23 @@ function App() {
     () => totalHoursByEmployee(assignments, employees),
     [assignments, employees],
   );
+
+  const workingEmployees = useMemo(() => {
+    const now = new Date();
+    const todayKey = monthKey(now.getFullYear(), now.getMonth());
+    const todaySchedule = schedules[todayKey] ?? [];
+    const todayISO = toISODate(now);
+    const nowTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    const employeeIds = employees.map((e) => e.id);
+    const workingIds = new Set(
+      todaySchedule
+        .filter((a) => a.date === todayISO && a.shift.start <= nowTime && nowTime <= a.shift.end)
+        .map((a) => a.employeeId),
+    );
+    return employees
+      .filter((e) => workingIds.has(e.id))
+      .map((e) => ({ id: e.id, color: employeeColor(e.id, employeeIds) }));
+  }, [schedules, employees]);
 
   function setAssignments(next: Assignment[]) {
     setSchedules((prev) => ({ ...prev, [key]: next }));
@@ -241,6 +261,7 @@ function App() {
             unavailability={unavailability}
             onToggle={handleToggleUnavailable}
           />
+          <SpaceScene workingEmployees={workingEmployees} />
         </main>
       </div>
 
