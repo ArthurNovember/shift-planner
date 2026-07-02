@@ -1,8 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { Assignment, Employee, ShiftDefinition, UnavailabilityMap } from './types';
-import { SHIFTS, WEEKEND_SHIFT } from './types';
-import { computeWarnings, generateSchedule, hoursBetween, totalHoursByEmployee } from './scheduler';
-import type { SchedulesMap } from './storage';
+import { useEffect, useMemo, useState } from "react";
+import type {
+  Assignment,
+  Employee,
+  ShiftDefinition,
+  UnavailabilityMap,
+} from "./types";
+import { SHIFTS, WEEKEND_SHIFT } from "./types";
+import {
+  computeWarnings,
+  generateSchedule,
+  hoursBetween,
+  totalHoursByEmployee,
+} from "./scheduler";
+import type { SchedulesMap } from "./storage";
 import {
   DEFAULT_EMPLOYEES,
   loadEmployees,
@@ -12,31 +22,50 @@ import {
   saveEmployees,
   saveSchedules,
   saveUnavailability,
-} from './storage';
-import { EmployeeManager } from './components/EmployeeManager';
-import { WarningsPanel } from './components/WarningsPanel';
-import { HoursSummary } from './components/HoursSummary';
-import { CalendarGrid } from './components/CalendarGrid';
-import { AvailabilityGrid } from './components/AvailabilityGrid';
-import './App.css';
+} from "./storage";
+import { EmployeeManager } from "./components/EmployeeManager";
+import { WarningsPanel } from "./components/WarningsPanel";
+import { HoursSummary } from "./components/HoursSummary";
+import { CalendarGrid } from "./components/CalendarGrid";
+import { AvailabilityGrid } from "./components/AvailabilityGrid";
+import "./App.css";
 
 const MONTH_NAMES = [
-  'Leden', 'Únor', 'Březen', 'Duben', 'Květen', 'Červen',
-  'Červenec', 'Srpen', 'Září', 'Říjen', 'Listopad', 'Prosinec',
+  "Leden",
+  "Únor",
+  "Březen",
+  "Duben",
+  "Květen",
+  "Červen",
+  "Červenec",
+  "Srpen",
+  "Září",
+  "Říjen",
+  "Listopad",
+  "Prosinec",
 ];
 
-function shiftForEmployee(employee: Employee, kind: ShiftDefinition['kind']): ShiftDefinition {
-  if (kind === 'weekend') return WEEKEND_SHIFT;
+function shiftForEmployee(
+  employee: Employee,
+  kind: ShiftDefinition["kind"],
+): ShiftDefinition {
+  if (kind === "weekend") return WEEKEND_SHIFT;
   return SHIFTS[employee.type][kind];
 }
 
 function App() {
   const today = new Date();
-  const [employees, setEmployees] = useState<Employee[]>(() => loadEmployees() ?? DEFAULT_EMPLOYEES);
+  const [employees, setEmployees] = useState<Employee[]>(
+    () => loadEmployees() ?? DEFAULT_EMPLOYEES,
+  );
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
-  const [schedules, setSchedules] = useState<SchedulesMap>(() => loadSchedules());
-  const [unavailability, setUnavailability] = useState<UnavailabilityMap>(() => loadUnavailability());
+  const [schedules, setSchedules] = useState<SchedulesMap>(() =>
+    loadSchedules(),
+  );
+  const [unavailability, setUnavailability] = useState<UnavailabilityMap>(() =>
+    loadUnavailability(),
+  );
   const [ptRegularityMode, setPtRegularityMode] = useState(false);
 
   useEffect(() => saveEmployees(employees), [employees]);
@@ -50,7 +79,10 @@ function App() {
     () => computeWarnings(year, month, employees, assignments),
     [year, month, employees, assignments],
   );
-  const hoursByEmployee = useMemo(() => totalHoursByEmployee(assignments, employees), [assignments, employees]);
+  const hoursByEmployee = useMemo(
+    () => totalHoursByEmployee(assignments, employees),
+    [assignments, employees],
+  );
 
   function setAssignments(next: Assignment[]) {
     setSchedules((prev) => ({ ...prev, [key]: next }));
@@ -58,10 +90,16 @@ function App() {
 
   function handleGenerate() {
     if (assignments.length > 0) {
-      const confirmed = window.confirm('Pro tento měsíc už existuje rozvrh. Vygenerovat znovu a přepsat ruční úpravy?');
+      const confirmed = window.confirm(
+        "Pro tento měsíc už existuje rozvrh. Vygenerovat znovu a přepsat ruční úpravy?",
+      );
       if (!confirmed) return;
     }
-    setAssignments(generateSchedule(year, month, employees, unavailability, { ptRegularityMode }));
+    setAssignments(
+      generateSchedule(year, month, employees, unavailability, {
+        ptRegularityMode,
+      }),
+    );
   }
 
   function handleToggleUnavailable(employeeId: string, iso: string) {
@@ -73,22 +111,38 @@ function App() {
     });
   }
 
-  function handleUpdateAssignmentEmployee(index: number, newEmployeeId: string) {
+  function handleUpdateAssignmentEmployee(
+    index: number,
+    newEmployeeId: string,
+  ) {
     const employee = employees.find((e) => e.id === newEmployeeId);
     if (!employee) return;
     const next = assignments.map((a, i) =>
-      i === index ? { ...a, employeeId: newEmployeeId, shift: shiftForEmployee(employee, a.shift.kind) } : a,
+      i === index
+        ? {
+            ...a,
+            employeeId: newEmployeeId,
+            shift: shiftForEmployee(employee, a.shift.kind),
+          }
+        : a,
     );
     setAssignments(next);
   }
 
-  function handleUpdateAssignmentTime(index: number, field: 'start' | 'end', value: string) {
+  function handleUpdateAssignmentTime(
+    index: number,
+    field: "start" | "end",
+    value: string,
+  ) {
     if (!value) return;
     const next = assignments.map((a, i) => {
       if (i !== index) return a;
-      const start = field === 'start' ? value : a.shift.start;
-      const end = field === 'end' ? value : a.shift.end;
-      return { ...a, shift: { ...a.shift, start, end, hours: hoursBetween(start, end) } };
+      const start = field === "start" ? value : a.shift.start;
+      const end = field === "end" ? value : a.shift.end;
+      return {
+        ...a,
+        shift: { ...a.shift, start, end, hours: hoursBetween(start, end) },
+      };
     });
     setAssignments(next);
   }
@@ -97,7 +151,11 @@ function App() {
     setAssignments(assignments.filter((_, i) => i !== index));
   }
 
-  function handleAddAssignment(date: string, employeeId: string, shift: ShiftDefinition) {
+  function handleAddAssignment(
+    date: string,
+    employeeId: string,
+    shift: ShiftDefinition,
+  ) {
     setAssignments([...assignments, { date, employeeId, shift }]);
   }
 
@@ -118,15 +176,31 @@ function App() {
   return (
     <div className="app">
       <header className="app-header">
-        <h1>Plánovač směn</h1>
+        <div>
+          <h1>
+            Plánovač <span className="accent">směn</span>
+          </h1>
+
+          <span className="app-subtitle">Planetum · e-shop</span>
+        </div>
         <div className="month-nav">
-          <button type="button" className="icon-btn" onClick={() => changeMonth(-1)} aria-label="Předchozí měsíc">
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={() => changeMonth(-1)}
+            aria-label="Předchozí měsíc"
+          >
             ‹
           </button>
           <span className="month-label">
             {MONTH_NAMES[month]} {year}
           </span>
-          <button type="button" className="icon-btn" onClick={() => changeMonth(1)} aria-label="Další měsíc">
+          <button
+            type="button"
+            className="icon-btn"
+            onClick={() => changeMonth(1)}
+            aria-label="Další měsíc"
+          >
             ›
           </button>
           <label className="regularity-toggle">
@@ -137,8 +211,14 @@ function App() {
             />
             Pravidelné směny pro poloviční úvazek
           </label>
-          <button type="button" className="primary-btn" onClick={handleGenerate}>
-            {assignments.length > 0 ? 'Vygenerovat znovu' : 'Vygenerovat rozvrh'}
+          <button
+            type="button"
+            className="primary-btn"
+            onClick={handleGenerate}
+          >
+            {assignments.length > 0
+              ? "Vygenerovat znovu"
+              : "Vygenerovat rozvrh"}
           </button>
         </div>
       </header>
@@ -147,7 +227,10 @@ function App() {
         <aside className="sidebar">
           <EmployeeManager employees={employees} onChange={setEmployees} />
           <WarningsPanel warnings={warnings} />
-          <HoursSummary employees={employees} hoursByEmployee={hoursByEmployee} />
+          <HoursSummary
+            employees={employees}
+            hoursByEmployee={hoursByEmployee}
+          />
         </aside>
 
         <main className="main-content">
@@ -163,7 +246,10 @@ function App() {
 
       {assignments.length === 0 ? (
         <section className="panel">
-          <p className="muted">Pro tento měsíc zatím není žádný rozvrh. Klikněte na „Vygenerovat rozvrh“.</p>
+          <p className="muted">
+            Pro tento měsíc zatím není žádný rozvrh. Klikněte na „Vygenerovat
+            rozvrh“.
+          </p>
         </section>
       ) : (
         <CalendarGrid
