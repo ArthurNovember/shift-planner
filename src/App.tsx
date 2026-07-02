@@ -1,13 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { Assignment, Employee, ShiftDefinition } from './types';
+import type { Assignment, Employee, ShiftDefinition, UnavailabilityMap } from './types';
 import { SHIFTS, WEEKEND_SHIFT } from './types';
 import { computeWarnings, generateSchedule, totalHoursByEmployee } from './scheduler';
 import type { SchedulesMap } from './storage';
-import { DEFAULT_EMPLOYEES, loadEmployees, loadSchedules, monthKey, saveEmployees, saveSchedules } from './storage';
+import {
+  DEFAULT_EMPLOYEES,
+  loadEmployees,
+  loadSchedules,
+  loadUnavailability,
+  monthKey,
+  saveEmployees,
+  saveSchedules,
+  saveUnavailability,
+} from './storage';
 import { EmployeeManager } from './components/EmployeeManager';
 import { WarningsPanel } from './components/WarningsPanel';
 import { HoursSummary } from './components/HoursSummary';
 import { CalendarGrid } from './components/CalendarGrid';
+import { AvailabilityGrid } from './components/AvailabilityGrid';
 import './App.css';
 
 const MONTH_NAMES = [
@@ -26,9 +36,11 @@ function App() {
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
   const [schedules, setSchedules] = useState<SchedulesMap>(() => loadSchedules());
+  const [unavailability, setUnavailability] = useState<UnavailabilityMap>(() => loadUnavailability());
 
   useEffect(() => saveEmployees(employees), [employees]);
   useEffect(() => saveSchedules(schedules), [schedules]);
+  useEffect(() => saveUnavailability(unavailability), [unavailability]);
 
   const key = monthKey(year, month);
   const assignments = useMemo(() => schedules[key] ?? [], [schedules, key]);
@@ -48,7 +60,16 @@ function App() {
       const confirmed = window.confirm('Pro tento měsíc už existuje rozvrh. Vygenerovat znovu a přepsat ruční úpravy?');
       if (!confirmed) return;
     }
-    setAssignments(generateSchedule(year, month, employees));
+    setAssignments(generateSchedule(year, month, employees, unavailability));
+  }
+
+  function handleToggleUnavailable(employeeId: string, iso: string) {
+    setUnavailability((prev) => {
+      const current = new Set(prev[employeeId] ?? []);
+      if (current.has(iso)) current.delete(iso);
+      else current.add(iso);
+      return { ...prev, [employeeId]: current };
+    });
   }
 
   function handleUpdateAssignmentEmployee(index: number, newEmployeeId: string) {
@@ -110,6 +131,14 @@ function App() {
         </aside>
 
         <main className="main-content">
+          <AvailabilityGrid
+            year={year}
+            month={month}
+            employees={employees}
+            unavailability={unavailability}
+            onToggle={handleToggleUnavailable}
+          />
+
           {assignments.length === 0 ? (
             <section className="panel">
               <p className="muted">Pro tento měsíc zatím není žádný rozvrh. Klikněte na „Vygenerovat rozvrh“.</p>

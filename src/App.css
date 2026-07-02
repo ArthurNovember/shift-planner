@@ -54,6 +54,13 @@
   gap: 16px;
 }
 
+.main-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
 .panel {
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -319,4 +326,56 @@ select {
   width: 20px;
   height: 20px;
   font-size: 13px;
+}
+
+/* Availability grid */
+.availability-scroll {
+  overflow-x: auto;
+}
+
+.availability-table {
+  border-collapse: collapse;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.availability-table th,
+.availability-table td {
+  padding: 2px;
+  text-align: center;
+}
+
+.availability-table th {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.availability-table th.weekend,
+.availability-table td.weekend {
+  background: var(--accent-bg);
+}
+
+.availability-name {
+  text-align: left !important;
+  padding-right: 10px !important;
+  font-weight: 600;
+  color: var(--text-h);
+  white-space: nowrap;
+}
+
+.availability-cell {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: #b91c1c;
+  font-weight: 700;
+  padding: 0;
+  line-height: 1;
+}
+
+.availability-cell.unavailable {
+  background: rgba(220, 38, 38, 0.15);
+  border-color: #b91c1c;
 }

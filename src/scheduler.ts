@@ -1,13 +1,5 @@
-import type { Assignment, Employee, ScheduleWarning, ShiftDefinition } from './types';
-import {
-  FT_LONG_WEEK_DAYS,
-  FT_SHORT_WEEK_DAYS,
-  PARTTIME_MONTHLY_CAP,
-  PT_LONG_WEEK_SHIFTS,
-  PT_SHORT_WEEK_SHIFTS,
-  SHIFTS,
-  WEEKEND_SHIFT,
-} from './types';
+import type { Assignment, Employee, ScheduleWarning, ShiftDefinition, UnavailabilityMap } from './types';
+import { FT_LONG_WEEK_DAYS, FT_SHORT_WEEK_DAYS, PARTTIME_MONTHLY_CAP, SHIFTS, WEEKEND_SHIFT } from './types';
 
 /** Which shift definitions make sense for this employee on a weekday vs. weekend day. */
 export function shiftOptionsFor(employee: Employee, isWeekend: boolean): ShiftDefinition[] {
@@ -35,12 +27,21 @@ function mondayOf(d: Date): Date {
 }
 
 /** Generates a full month's assignments from scratch, following the team's shift rules. */
-export function generateSchedule(year: number, month: number, employees: Employee[]): Assignment[] {
+export function generateSchedule(
+  year: number,
+  month: number,
+  employees: Employee[],
+  unavailability: UnavailabilityMap = {},
+): Assignment[] {
   const assignments: Assignment[] = [];
   const fulltime = employees.filter((e) => e.type === 'fulltime');
   const parttime = employees.filter((e) => e.type === 'parttime');
   const totalDays = daysInMonth(year, month);
   const monthIndex = year * 12 + month;
+
+  function isUnavailable(employeeId: string, iso: string): boolean {
+    return unavailability[employeeId]?.has(iso) ?? false;
+  }
 
   // --- Weekends: one employee covers both Saturday and Sunday with the weekend shift ---
   const weekendPairs: { saturday: Date; sunday: Date }[] = [];
@@ -55,10 +56,32 @@ export function generateSchedule(year: number, month: number, employees: Employe
   if (employees.length > 0) {
     const weekendStart = monthIndex % employees.length;
     weekendPairs.forEach((pair, idx) => {
-      const emp = employees[(weekendStart + idx) % employees.length];
-      assignments.push({ date: toISODate(pair.saturday), employeeId: emp.id, shift: WEEKEND_SHIFT });
-      assignments.push({ date: toISODate(pair.sunday), employeeId: emp.id, shift: WEEKEND_SHIFT });
-      weekendEmployeeByWeekKey.set(toISODate(mondayOf(pair.saturday)), emp.id);
+      const satIso = toISODate(pair.saturday);
+      const sunIso = toISODate(pair.sunday);
+      const weekKey = toISODate(mondayOf(pair.saturday));
+      const start = (weekendStart + idx) % employees.length;
+
+      let chosen: Employee | undefined;
+      for (let k = 0; k < employees.length; k++) {
+        const candidate = employees[(start + k) % employees.length];
+        if (!isUnavailable(candidate.id, satIso) && !isUnavailable(candidate.id, sunIso)) {
+          chosen = candidate;
+          break;
+        }
+      }
+
+      if (chosen) {
+        assignments.push({ date: satIso, employeeId: chosen.id, shift: WEEKEND_SHIFT });
+        assignments.push({ date: sunIso, employeeId: chosen.id, shift: WEEKEND_SHIFT });
+        weekendEmployeeByWeekKey.set(weekKey, chosen.id);
+      } else {
+        // nobody is free for the whole weekend: cover each day independently if possible
+        const satEmp = employees.find((e) => !isUnavailable(e.id, satIso));
+        const sunEmp = employees.find((e) => !isUnavailable(e.id, sunIso));
+        if (satEmp) assignments.push({ date: satIso, employeeId: satEmp.id, shift: WEEKEND_SHIFT });
+        if (sunEmp) assignments.push({ date: sunIso, employeeId: sunEmp.id, shift: WEEKEND_SHIFT });
+        if (satEmp) weekendEmployeeByWeekKey.set(weekKey, satEmp.id);
+      }
     });
   }
 
@@ -78,15 +101,17 @@ export function generateSchedule(year: number, month: number, employees: Employe
     return weekendEmployeeByWeekKey.get(weekKey) === employeeId;
   }
 
-  // --- Fulltime: pick which weekdays each FT works this week (long week = all, short week = middle days only) ---
+  // --- Fulltime: pick which weekdays each FT works this week (long week = all available,
+  //     short week = middle days only), skipping any date they've marked unavailable ---
   const ftWorkingDates = new Map<string, Set<string>>(); // employeeId -> set of ISO dates
   fulltime.forEach((emp) => ftWorkingDates.set(emp.id, new Set()));
   orderedWeekKeys.forEach((weekKey) => {
     const weekdays = weekdaysByWeekKey.get(weekKey)!;
     fulltime.forEach((emp) => {
+      const available = weekdays.filter((d) => !isUnavailable(emp.id, toISODate(d)));
       const target = isShortWeek(emp.id, weekKey) ? FT_SHORT_WEEK_DAYS : FT_LONG_WEEK_DAYS;
-      const dropCount = Math.max(0, weekdays.length - target);
-      const kept = [...weekdays];
+      const dropCount = Math.max(0, available.length - target);
+      const kept = [...available];
       // drop from the end (Friday side) and start (Monday side) alternately, resting around the weekend
       for (let i = 0; i < dropCount; i++) {
         if (i % 2 === 0) kept.pop();
@@ -98,13 +123,12 @@ export function generateSchedule(year: number, month: number, employees: Employe
   });
 
   // --- Assign fulltime morning/afternoon per weekday, tracking any gaps left for part-time to fill ---
-  const gapsByWeekKey = new Map<string, { date: string; kind: 'morning' | 'afternoon' }[]>();
-  const takenSlots = new Set<string>(); // `${date}-${kind}`
+  const gaps: { date: string; kind: 'morning' | 'afternoon' }[] = [];
+  const ftTakenSlots = new Set<string>(); // `${date}-${kind}`, fulltime coverage only
   let ftFlipCounter = 0;
 
   orderedWeekKeys.forEach((weekKey) => {
     const weekdays = weekdaysByWeekKey.get(weekKey)!;
-    gapsByWeekKey.set(weekKey, []);
     weekdays.forEach((d) => {
       const iso = toISODate(d);
       const working = fulltime.filter((emp) => ftWorkingDates.get(emp.id)!.has(iso));
@@ -115,8 +139,8 @@ export function generateSchedule(year: number, month: number, employees: Employe
         const afternoonEmp = morningEmp === first ? second : first;
         assignments.push({ date: iso, employeeId: morningEmp.id, shift: SHIFTS.fulltime.morning });
         assignments.push({ date: iso, employeeId: afternoonEmp.id, shift: SHIFTS.fulltime.afternoon });
-        takenSlots.add(`${iso}-morning`);
-        takenSlots.add(`${iso}-afternoon`);
+        ftTakenSlots.add(`${iso}-morning`);
+        ftTakenSlots.add(`${iso}-afternoon`);
         ftFlipCounter++;
       } else if (working.length === 1) {
         const emp = working[0];
@@ -124,55 +148,61 @@ export function generateSchedule(year: number, month: number, employees: Employe
         const kind = preferMorning ? 'morning' : 'afternoon';
         const gapKind = preferMorning ? 'afternoon' : 'morning';
         assignments.push({ date: iso, employeeId: emp.id, shift: SHIFTS.fulltime[kind] });
-        takenSlots.add(`${iso}-${kind}`);
-        gapsByWeekKey.get(weekKey)!.push({ date: iso, kind: gapKind });
+        ftTakenSlots.add(`${iso}-${kind}`);
+        gaps.push({ date: iso, kind: gapKind });
         ftFlipCounter++;
       } else {
-        gapsByWeekKey.get(weekKey)!.push({ date: iso, kind: 'morning' });
-        gapsByWeekKey.get(weekKey)!.push({ date: iso, kind: 'afternoon' });
+        gaps.push({ date: iso, kind: 'morning' });
+        gaps.push({ date: iso, kind: 'afternoon' });
       }
     });
   });
 
-  // --- Part-time: fill fulltime gaps first, then top up remaining weekly quota with extra support shifts ---
+  // --- Part-time: cover fulltime gaps first, then keep adding support shifts (even alongside
+  //     fulltime coverage) until each part-timer's monthly hours approach the target cap ---
   const ptHours = new Map<string, number>();
   parttime.forEach((emp) => ptHours.set(emp.id, 0));
   assignments.forEach((a) => {
     if (ptHours.has(a.employeeId)) ptHours.set(a.employeeId, (ptHours.get(a.employeeId) ?? 0) + a.shift.hours);
   });
 
-  orderedWeekKeys.forEach((weekKey) => {
-    const weekdays = weekdaysByWeekKey.get(weekKey)!;
-    const quotaRemaining = new Map<string, number>();
-    parttime.forEach((emp) => {
-      quotaRemaining.set(emp.id, isShortWeek(emp.id, weekKey) ? PT_SHORT_WEEK_SHIFTS : PT_LONG_WEEK_SHIFTS);
+  const ptTakenSlots = new Set<string>(); // `${date}-${kind}`, prevents double-booking two part-timers on one slot
+
+  function assignPtSlot(date: string, kind: 'morning' | 'afternoon', enforceCap: boolean): boolean {
+    const slotKey = `${date}-${kind}`;
+    if (ptTakenSlots.has(slotKey)) return false;
+    const shiftHours = SHIFTS.parttime[kind].hours;
+    const candidates = parttime.filter((emp) => {
+      if (isUnavailable(emp.id, date)) return false;
+      if (enforceCap && (ptHours.get(emp.id) ?? 0) + shiftHours > PARTTIME_MONTHLY_CAP) return false;
+      return true;
+    });
+    if (candidates.length === 0) return false;
+    const chosen = candidates.sort((a, b) => (ptHours.get(a.id) ?? 0) - (ptHours.get(b.id) ?? 0))[0];
+    assignments.push({ date, employeeId: chosen.id, shift: SHIFTS.parttime[kind] });
+    ptTakenSlots.add(slotKey);
+    ptHours.set(chosen.id, (ptHours.get(chosen.id) ?? 0) + shiftHours);
+    return true;
+  }
+
+  if (parttime.length > 0) {
+    // Priority 1: cover gaps left by fulltime's short week (mandatory coverage, cap allowed to slip if needed)
+    gaps.forEach((gap) => {
+      const ok = assignPtSlot(gap.date, gap.kind, true);
+      if (!ok) assignPtSlot(gap.date, gap.kind, false);
     });
 
-    function assignPtSlot(date: string, kind: 'morning' | 'afternoon') {
-      const slotKey = `${date}-${kind}`;
-      if (takenSlots.has(slotKey)) return;
-      const candidates = parttime.filter((emp) => (quotaRemaining.get(emp.id) ?? 0) > 0);
-      if (candidates.length === 0) return;
-      const chosen = candidates.sort((a, b) => (ptHours.get(a.id) ?? 0) - (ptHours.get(b.id) ?? 0))[0];
-      assignments.push({ date, employeeId: chosen.id, shift: SHIFTS.parttime[kind] });
-      takenSlots.add(slotKey);
-      quotaRemaining.set(chosen.id, (quotaRemaining.get(chosen.id) ?? 0) - 1);
-      ptHours.set(chosen.id, (ptHours.get(chosen.id) ?? 0) + SHIFTS.parttime[kind].hours);
-    }
-
-    // Priority 1: cover gaps left by fulltime's short week
-    gapsByWeekKey.get(weekKey)!.forEach((gap) => assignPtSlot(gap.date, gap.kind));
-
-    // Priority 2: use any remaining quota as extra support, spread across the week's open slots
-    const anyQuotaLeft = () => parttime.some((emp) => (quotaRemaining.get(emp.id) ?? 0) > 0);
-    for (const d of weekdays) {
-      if (!anyQuotaLeft()) break;
-      const iso = toISODate(d);
-      (['morning', 'afternoon'] as const).forEach((kind) => {
-        if (anyQuotaLeft()) assignPtSlot(iso, kind);
+    // Priority 2: keep adding support shifts - even on days fulltime already fully covers -
+    // spreading across the whole month until every part-timer is at (or just under) the cap
+    orderedWeekKeys.forEach((weekKey) => {
+      weekdaysByWeekKey.get(weekKey)!.forEach((d) => {
+        const iso = toISODate(d);
+        (['morning', 'afternoon'] as const).forEach((kind) => {
+          assignPtSlot(iso, kind, true);
+        });
       });
-    }
-  });
+    });
+  }
 
   return assignments;
 }
@@ -216,12 +246,6 @@ export function computeWarnings(
 
   // Weekend fairness: everyone should get roughly one weekend a month
   const weekendCountByEmployee = new Map<string, number>();
-  const weekendDates = new Set<string>();
-  assignments.forEach((a) => {
-    if (a.shift.kind === 'weekend') {
-      weekendDates.add(a.date);
-    }
-  });
   assignments
     .filter((a) => a.shift.kind === 'weekend')
     .forEach((a) => {
@@ -242,13 +266,18 @@ export function computeWarnings(
     }
   }
 
-  // Coverage gaps on weekdays (missing morning or afternoon slot)
+  // Coverage gaps: missing morning/afternoon slot on weekdays, missing weekend coverage
   for (let day = 1; day <= totalDays; day++) {
     const d = new Date(year, month, day);
     const dow = d.getDay();
-    if (dow === 0 || dow === 6) continue;
     const iso = toISODate(d);
     const dayAssignments = assignments.filter((a) => a.date === iso);
+    if (dow === 0 || dow === 6) {
+      if (!dayAssignments.some((a) => a.shift.kind === 'weekend')) {
+        warnings.push({ type: 'coverage-gap', date: iso, message: `${iso}: chybí pokrytí víkendové směny.` });
+      }
+      continue;
+    }
     const hasMorning = dayAssignments.some((a) => a.shift.kind === 'morning');
     const hasAfternoon = dayAssignments.some((a) => a.shift.kind === 'afternoon');
     if (!hasMorning) {

@@ -53,13 +53,15 @@ export const SHIFTS: Record<'fulltime' | 'parttime', { morning: ShiftDefinition;
 
 export const WEEKEND_SHIFT: ShiftDefinition = { kind: 'weekend', start: '10:15', end: '19:45', hours: 9.5 };
 
+/** Target and soft cap for part-time monthly hours: the generator fills shifts up to this total. */
 export const PARTTIME_MONTHLY_CAP = 80;
 
 /**
- * A week where an employee covers the weekend (~19h) is a "short week" with fewer
- * weekday shifts, to balance out their total hours against a normal "long week".
+ * A week where a fulltime employee covers the weekend (~19h) is a "short week" with
+ * fewer weekday shifts, to balance out their total hours against a normal "long week".
  */
 export const FT_LONG_WEEK_DAYS = 5;
 export const FT_SHORT_WEEK_DAYS = 3;
-export const PT_LONG_WEEK_SHIFTS = 3;
-export const PT_SHORT_WEEK_SHIFTS = 1;
+
+/** employeeId -> set of ISO dates that employee cannot work. */
+export type UnavailabilityMap = Record<string, Set<string>>;

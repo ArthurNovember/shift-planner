@@ -1,7 +1,8 @@
-import type { Assignment, Employee } from './types';
+import type { Assignment, Employee, UnavailabilityMap } from './types';
 
 const EMPLOYEES_KEY = 'shiftPlanner.employees';
 const SCHEDULES_KEY = 'shiftPlanner.schedules';
+const UNAVAILABILITY_KEY = 'shiftPlanner.unavailability';
 
 export const DEFAULT_EMPLOYEES: Employee[] = [
   { id: 'ft1', name: 'Zaměstnanec 1', type: 'fulltime' },
@@ -43,4 +44,27 @@ export function saveSchedules(schedules: SchedulesMap): void {
 
 export function monthKey(year: number, month: number): string {
   return `${year}-${month}`;
+}
+
+export function loadUnavailability(): UnavailabilityMap {
+  try {
+    const raw = localStorage.getItem(UNAVAILABILITY_KEY);
+    if (!raw) return {};
+    const parsed: Record<string, string[]> = JSON.parse(raw);
+    const result: UnavailabilityMap = {};
+    Object.entries(parsed).forEach(([employeeId, dates]) => {
+      result[employeeId] = new Set(dates);
+    });
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+export function saveUnavailability(unavailability: UnavailabilityMap): void {
+  const serializable: Record<string, string[]> = {};
+  Object.entries(unavailability).forEach(([employeeId, dates]) => {
+    serializable[employeeId] = [...dates];
+  });
+  localStorage.setItem(UNAVAILABILITY_KEY, JSON.stringify(serializable));
 }
