@@ -109,22 +109,26 @@ export function generateSchedule(
     return weekendEmployeeByWeekKey.get(weekKey) === employeeId;
   }
 
-  // --- Fulltime: pick which weekdays each FT works this week (long week = all available,
-  //     short week = middle days only), skipping any date they've marked unavailable ---
+  // --- Fulltime: pick which weekdays each FT works this week (long week = most of it,
+  //     short week = fewer still), skipping any date they've marked unavailable. One FT
+  //     always trims days off from the Friday side, the other from the Monday side, so
+  //     their days off land on opposite ends and (as long as the two targets add up to
+  //     at least the week's length) never coincide on the same day. ---
   const ftWorkingDates = new Map<string, Set<string>>(); // employeeId -> set of ISO dates
   fulltime.forEach((emp) => ftWorkingDates.set(emp.id, new Set()));
   orderedWeekKeys.forEach((weekKey) => {
     const weekdays = weekdaysByWeekKey.get(weekKey)!;
-    fulltime.forEach((emp) => {
+    fulltime.forEach((emp, empIndex) => {
       const available = weekdays.filter((d) => !isUnavailable(emp.id, toISODate(d)));
       const target = isShortWeek(emp.id, weekKey) ? FT_SHORT_WEEK_DAYS : FT_LONG_WEEK_DAYS;
-      const dropCount = Math.max(0, available.length - target);
-      const kept = [...available];
-      // drop from the end (Friday side) and start (Monday side) alternately, resting around the weekend
-      for (let i = 0; i < dropCount; i++) {
-        if (i % 2 === 0) kept.pop();
-        else kept.shift();
-      }
+      const offCount = Math.max(0, available.length - target);
+      // even index: trim off days from the end (Friday side); odd index: from the start (Monday side)
+      const kept =
+        offCount === 0
+          ? available
+          : empIndex % 2 === 0
+            ? available.slice(0, available.length - offCount)
+            : available.slice(offCount);
       const set = ftWorkingDates.get(emp.id)!;
       kept.forEach((d) => set.add(toISODate(d)));
     });

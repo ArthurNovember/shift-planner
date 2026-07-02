@@ -57,11 +57,12 @@ export const WEEKEND_SHIFT: ShiftDefinition = { kind: 'weekend', start: '10:15',
 export const PARTTIME_MONTHLY_CAP = 80;
 
 /**
- * A week where a fulltime employee covers the weekend (~19h) is a "short week" with
- * fewer weekday shifts, to balance out their total hours against a normal "long week".
+ * Fulltime weekday targets, tuned so monthly hours land close to a normal ~160h/month
+ * fulltime job. A week where the employee covers the weekend (~19h) is a "short week"
+ * with even fewer weekday shifts, to balance out that extra weekend load.
  */
-export const FT_LONG_WEEK_DAYS = 5;
-export const FT_SHORT_WEEK_DAYS = 3;
+export const FT_LONG_WEEK_DAYS = 4;
+export const FT_SHORT_WEEK_DAYS = 2;
 
 /** employeeId -> set of ISO dates that employee cannot work. */
 export type UnavailabilityMap = Record<string, Set<string>>;
