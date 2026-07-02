@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Assignment, Employee, ShiftDefinition, UnavailabilityMap } from './types';
 import { SHIFTS, WEEKEND_SHIFT } from './types';
-import { computeWarnings, generateSchedule, totalHoursByEmployee } from './scheduler';
+import { computeWarnings, generateSchedule, hoursBetween, totalHoursByEmployee } from './scheduler';
 import type { SchedulesMap } from './storage';
 import {
   DEFAULT_EMPLOYEES,
@@ -81,6 +81,17 @@ function App() {
     setAssignments(next);
   }
 
+  function handleUpdateAssignmentTime(index: number, field: 'start' | 'end', value: string) {
+    if (!value) return;
+    const next = assignments.map((a, i) => {
+      if (i !== index) return a;
+      const start = field === 'start' ? value : a.shift.start;
+      const end = field === 'end' ? value : a.shift.end;
+      return { ...a, shift: { ...a.shift, start, end, hours: hoursBetween(start, end) } };
+    });
+    setAssignments(next);
+  }
+
   function handleRemoveAssignment(index: number) {
     setAssignments(assignments.filter((_, i) => i !== index));
   }
@@ -152,6 +163,7 @@ function App() {
           employees={employees}
           assignments={assignments}
           onUpdateAssignmentEmployee={handleUpdateAssignmentEmployee}
+          onUpdateAssignmentTime={handleUpdateAssignmentTime}
           onRemoveAssignment={handleRemoveAssignment}
           onAddAssignment={handleAddAssignment}
         />

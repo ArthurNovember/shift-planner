@@ -285,10 +285,33 @@ select {
   font-size: 11px;
 }
 
-.shift-time {
+.shift-time-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-bottom: 3px;
+  flex-wrap: wrap;
+}
+
+.shift-kind-label {
   font-weight: 600;
-  margin-bottom: 2px;
   color: var(--text-h);
+  margin-right: 2px;
+}
+
+.shift-time-input {
+  font-size: 11px;
+  padding: 1px 2px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-h);
+  width: 68px;
+}
+
+.shift-hours-label {
+  color: var(--text);
+  margin-left: auto;
 }
 
 .shift-employee-row {

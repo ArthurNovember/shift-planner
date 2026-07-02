@@ -9,6 +9,7 @@ interface Props {
   employees: Employee[];
   assignments: Assignment[];
   onUpdateAssignmentEmployee: (index: number, newEmployeeId: string) => void;
+  onUpdateAssignmentTime: (index: number, field: 'start' | 'end', value: string) => void;
   onRemoveAssignment: (index: number) => void;
   onAddAssignment: (date: string, employeeId: string, shift: ShiftDefinition) => void;
 }
@@ -78,6 +79,7 @@ export function CalendarGrid({
   employees,
   assignments,
   onUpdateAssignmentEmployee,
+  onUpdateAssignmentTime,
   onRemoveAssignment,
   onAddAssignment,
 }: Props) {
@@ -116,8 +118,24 @@ export function CalendarGrid({
               <div className="calendar-cell-shifts">
                 {dayItems.map(({ a, i }) => (
                   <div key={i} className="shift-block" style={{ borderColor: employeeColor(a.employeeId, ids) }}>
-                    <div className="shift-time">
-                      {SHIFT_LABELS[a.shift.kind]} {a.shift.start}–{a.shift.end}
+                    <div className="shift-time-row">
+                      <span className="shift-kind-label">{SHIFT_LABELS[a.shift.kind]}</span>
+                      <input
+                        type="time"
+                        className="shift-time-input"
+                        value={a.shift.start}
+                        onChange={(e) => onUpdateAssignmentTime(i, 'start', e.target.value)}
+                        aria-label="Začátek směny"
+                      />
+                      <span>–</span>
+                      <input
+                        type="time"
+                        className="shift-time-input"
+                        value={a.shift.end}
+                        onChange={(e) => onUpdateAssignmentTime(i, 'end', e.target.value)}
+                        aria-label="Konec směny"
+                      />
+                      <span className="shift-hours-label">{a.shift.hours.toFixed(1)} h</span>
                     </div>
                     <div className="shift-employee-row">
                       <select

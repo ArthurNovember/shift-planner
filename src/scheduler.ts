@@ -7,6 +7,14 @@ export function shiftOptionsFor(employee: Employee, isWeekend: boolean): ShiftDe
   return [SHIFTS[employee.type].morning, SHIFTS[employee.type].afternoon];
 }
 
+/** Hours between two "HH:MM" times, for when someone leaves early or stays late. */
+export function hoursBetween(start: string, end: string): number {
+  const [startH, startM] = start.split(':').map(Number);
+  const [endH, endM] = end.split(':').map(Number);
+  const minutes = endH * 60 + endM - (startH * 60 + startM);
+  return Math.max(0, minutes) / 60;
+}
+
 function pad(n: number): string {
   return n.toString().padStart(2, '0');
 }
