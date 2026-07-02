@@ -138,24 +138,24 @@ function App() {
             unavailability={unavailability}
             onToggle={handleToggleUnavailable}
           />
-
-          {assignments.length === 0 ? (
-            <section className="panel">
-              <p className="muted">Pro tento měsíc zatím není žádný rozvrh. Klikněte na „Vygenerovat rozvrh“.</p>
-            </section>
-          ) : (
-            <CalendarGrid
-              year={year}
-              month={month}
-              employees={employees}
-              assignments={assignments}
-              onUpdateAssignmentEmployee={handleUpdateAssignmentEmployee}
-              onRemoveAssignment={handleRemoveAssignment}
-              onAddAssignment={handleAddAssignment}
-            />
-          )}
         </main>
       </div>
+
+      {assignments.length === 0 ? (
+        <section className="panel">
+          <p className="muted">Pro tento měsíc zatím není žádný rozvrh. Klikněte na „Vygenerovat rozvrh“.</p>
+        </section>
+      ) : (
+        <CalendarGrid
+          year={year}
+          month={month}
+          employees={employees}
+          assignments={assignments}
+          onUpdateAssignmentEmployee={handleUpdateAssignmentEmployee}
+          onRemoveAssignment={handleRemoveAssignment}
+          onAddAssignment={handleAddAssignment}
+        />
+      )}
     </div>
   );
 }
