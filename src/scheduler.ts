@@ -1,5 +1,5 @@
 import type { Assignment, Employee, ScheduleWarning, ShiftDefinition, UnavailabilityMap } from './types';
-import { FT_LONG_WEEK_DAYS, FT_SHORT_WEEK_DAYS, PARTTIME_MONTHLY_CAP, SHIFTS, WEEKEND_SHIFT } from './types';
+import { FT_SHORT_WEEK_REDUCTION, FULLTIME_TARGET_HOURS, PARTTIME_MONTHLY_CAP, SHIFTS, WEEKEND_SHIFT } from './types';
 
 /** Which shift definitions make sense for this employee on a weekday vs. weekend day. */
 export function shiftOptionsFor(employee: Employee, isWeekend: boolean): ShiftDefinition[] {
@@ -109,18 +109,35 @@ export function generateSchedule(
     return weekendEmployeeByWeekKey.get(weekKey) === employeeId;
   }
 
-  // --- Fulltime: pick which weekdays each FT works this week (long week = most of it,
-  //     short week = fewer still), skipping any date they've marked unavailable. One FT
-  //     always trims days off from the Friday side, the other from the Monday side, so
-  //     their days off land on opposite ends and (as long as the two targets add up to
-  //     at least the week's length) never coincide on the same day. ---
+  // --- Fulltime: work backwards from the ~160h/month target to figure out how many days a
+  //     week each FT actually needs, so the total lands close to it regardless of how many
+  //     weeks/weekdays this particular month has. A week where they cover the weekend (~19h)
+  //     gets fewer weekday shifts, to rest around that extra load. ---
+  const weeksCount = Math.max(1, orderedWeekKeys.length);
+  const ftDayTargets = new Map<string, { longDays: number; shortDays: number }>();
+  fulltime.forEach((emp) => {
+    const shortWeeksCount = orderedWeekKeys.filter((wk) => isShortWeek(emp.id, wk)).length;
+    const weekendHours = shortWeeksCount * WEEKEND_SHIFT.hours * 2;
+    const targetTotalDays = Math.round(Math.max(0, FULLTIME_TARGET_HOURS - weekendHours) / SHIFTS.fulltime.morning.hours);
+    const longDays = Math.min(
+      5,
+      Math.max(0, Math.round((targetTotalDays + FT_SHORT_WEEK_REDUCTION * shortWeeksCount) / weeksCount)),
+    );
+    const shortDays = Math.max(0, longDays - FT_SHORT_WEEK_REDUCTION);
+    ftDayTargets.set(emp.id, { longDays, shortDays });
+  });
+
+  // One FT always trims days off from the Friday side, the other from the Monday side, so
+  // their days off land on opposite ends and (as long as the two targets add up to at least
+  // the week's length) never coincide on the same day.
   const ftWorkingDates = new Map<string, Set<string>>(); // employeeId -> set of ISO dates
   fulltime.forEach((emp) => ftWorkingDates.set(emp.id, new Set()));
   orderedWeekKeys.forEach((weekKey) => {
     const weekdays = weekdaysByWeekKey.get(weekKey)!;
     fulltime.forEach((emp, empIndex) => {
       const available = weekdays.filter((d) => !isUnavailable(emp.id, toISODate(d)));
-      const target = isShortWeek(emp.id, weekKey) ? FT_SHORT_WEEK_DAYS : FT_LONG_WEEK_DAYS;
+      const { longDays, shortDays } = ftDayTargets.get(emp.id)!;
+      const target = isShortWeek(emp.id, weekKey) ? shortDays : longDays;
       const offCount = Math.max(0, available.length - target);
       // even index: trim off days from the end (Friday side); odd index: from the start (Monday side)
       const kept =

@@ -56,13 +56,14 @@ export const WEEKEND_SHIFT: ShiftDefinition = { kind: 'weekend', start: '10:15',
 /** Target and soft cap for part-time monthly hours: the generator fills shifts up to this total. */
 export const PARTTIME_MONTHLY_CAP = 80;
 
-/**
- * Fulltime weekday targets, tuned so monthly hours land close to a normal ~160h/month
- * fulltime job. A week where the employee covers the weekend (~19h) is a "short week"
- * with even fewer weekday shifts, to balance out that extra weekend load.
- */
-export const FT_LONG_WEEK_DAYS = 4;
-export const FT_SHORT_WEEK_DAYS = 2;
+/** Target monthly hours for a fulltime employee - the generator works backwards from this
+ * to decide how many days a week they need, so the total lands close to it every month
+ * regardless of how many weekdays/weekends that particular month happens to have. */
+export const FULLTIME_TARGET_HOURS = 160;
+
+/** A week where the employee covers the weekend (~19h) gets this many fewer weekday shifts,
+ * to balance out that extra weekend load and give them a real rest around it. */
+export const FT_SHORT_WEEK_REDUCTION = 2;
 
 /** employeeId -> set of ISO dates that employee cannot work. */
 export type UnavailabilityMap = Record<string, Set<string>>;
