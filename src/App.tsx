@@ -14,15 +14,17 @@ import {
   totalHoursByEmployee,
 } from "./scheduler";
 import { employeeColor } from "./colors";
-import type { SchedulesMap } from "./storage";
+import type { SchedulesMap, Theme } from "./storage";
 import {
   DEFAULT_EMPLOYEES,
   loadEmployees,
   loadSchedules,
+  loadTheme,
   loadUnavailability,
   monthKey,
   saveEmployees,
   saveSchedules,
+  saveTheme,
   saveUnavailability,
 } from "./storage";
 import { EmployeeManager } from "./components/EmployeeManager";
@@ -70,9 +72,14 @@ function App() {
     loadUnavailability(),
   );
   const [ptRegularityMode, setPtRegularityMode] = useState(false);
+  const [theme, setTheme] = useState<Theme>(() => loadTheme());
 
   useEffect(() => saveEmployees(employees), [employees]);
   useEffect(() => saveSchedules(schedules), [schedules]);
+  useEffect(() => {
+    saveTheme(theme);
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
   useEffect(() => saveUnavailability(unavailability), [unavailability]);
 
   const key = monthKey(year, month);
@@ -284,6 +291,24 @@ function App() {
           onAddAssignment={handleAddAssignment}
         />
       )}
+
+      <footer className="app-footer">
+        <span className="theme-toggle-label">
+          {theme === "light" ? "Světlý režim" : "Tmavý režim"}
+        </span>
+        <button
+          type="button"
+          className="theme-toggle"
+          role="switch"
+          aria-checked={theme === "light"}
+          aria-label="Přepnout světlý/tmavý režim"
+          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+        >
+          <span className="theme-toggle-track">
+            <span className="theme-toggle-thumb" />
+          </span>
+        </button>
+      </footer>
     </div>
   );
 }

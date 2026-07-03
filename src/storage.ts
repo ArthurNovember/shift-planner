@@ -3,6 +3,17 @@ import type { Assignment, Employee, UnavailabilityMap } from './types';
 const EMPLOYEES_KEY = 'shiftPlanner.employees';
 const SCHEDULES_KEY = 'shiftPlanner.schedules';
 const UNAVAILABILITY_KEY = 'shiftPlanner.unavailability';
+const THEME_KEY = 'shiftPlanner.theme';
+
+export type Theme = 'dark' | 'light';
+
+export function loadTheme(): Theme {
+  return localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark';
+}
+
+export function saveTheme(theme: Theme): void {
+  localStorage.setItem(THEME_KEY, theme);
+}
 
 export const DEFAULT_EMPLOYEES: Employee[] = [
   { id: 'ft1', name: 'Zaměstnanec 1', type: 'fulltime' },
