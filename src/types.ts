@@ -25,7 +25,8 @@ export type WarningType =
   | 'pt-hours-exceeded'
   | 'ft-hours-deviation'
   | 'weekend-uneven'
-  | 'coverage-gap';
+  | 'coverage-gap'
+  | 'availability-conflict';
 
 export interface ScheduleWarning {
   type: WarningType;
@@ -84,8 +85,13 @@ export const PT_REGULAR_LONG_WEEK_SHIFTS = 3;
  * many fewer morning shifts, so they rest around it like fulltime does. */
 export const PT_SHORT_WEEK_REDUCTION = 2;
 
-/** employeeId -> set of ISO dates that employee cannot work. */
-export type UnavailabilityMap = Record<string, Set<string>>;
+/** Which weekday shift kind(s) an employee is marked unavailable for on a given date. Weekends
+ * have no morning/afternoon split (one shift covers the whole day), so a weekend day off is
+ * represented the same way as a full weekday off: both kinds marked. */
+export type AvailabilityKind = 'morning' | 'afternoon';
+
+/** employeeId -> ISO date -> set of shift kinds that employee cannot work that day. */
+export type UnavailabilityMap = Record<string, Record<string, Set<AvailabilityKind>>>;
 
 export interface ScheduleOptions {
   /** Give each part-timer a fixed recurring weekly morning pattern instead of the default

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type {
   Assignment,
+  AvailabilityKind,
   Employee,
   ShiftDefinition,
   UnavailabilityMap,
@@ -86,8 +87,8 @@ function App() {
   const assignments = useMemo(() => schedules[key] ?? [], [schedules, key]);
 
   const warnings = useMemo(
-    () => computeWarnings(year, month, employees, assignments),
-    [year, month, employees, assignments],
+    () => computeWarnings(year, month, employees, assignments, unavailability),
+    [year, month, employees, assignments, unavailability],
   );
   const hoursByEmployee = useMemo(
     () => totalHoursByEmployee(assignments, employees),
@@ -147,12 +148,28 @@ function App() {
       });
   }
 
-  function handleToggleUnavailable(employeeId: string, iso: string) {
+  function handleToggleUnavailable(
+    employeeId: string,
+    iso: string,
+    kind?: AvailabilityKind,
+  ) {
     setUnavailability((prev) => {
-      const current = new Set(prev[employeeId] ?? []);
-      if (current.has(iso)) current.delete(iso);
-      else current.add(iso);
-      return { ...prev, [employeeId]: current };
+      const employeeDays = prev[employeeId] ?? {};
+      const current = employeeDays[iso] ?? new Set<AvailabilityKind>();
+      let next: Set<AvailabilityKind>;
+      if (kind) {
+        next = new Set(current);
+        if (next.has(kind)) next.delete(kind);
+        else next.add(kind);
+      } else {
+        // No specific kind (weekend day): toggle the whole day off at once.
+        const bothBlocked = current.has("morning") && current.has("afternoon");
+        next = bothBlocked ? new Set() : new Set(["morning", "afternoon"]);
+      }
+      const nextDays = { ...employeeDays };
+      if (next.size === 0) delete nextDays[iso];
+      else nextDays[iso] = next;
+      return { ...prev, [employeeId]: nextDays };
     });
   }
 

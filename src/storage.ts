@@ -61,10 +61,14 @@ export function loadUnavailability(): UnavailabilityMap {
   try {
     const raw = localStorage.getItem(UNAVAILABILITY_KEY);
     if (!raw) return {};
-    const parsed: Record<string, string[]> = JSON.parse(raw);
+    const parsed: Record<string, Record<string, ('morning' | 'afternoon')[]>> = JSON.parse(raw);
     const result: UnavailabilityMap = {};
-    Object.entries(parsed).forEach(([employeeId, dates]) => {
-      result[employeeId] = new Set(dates);
+    Object.entries(parsed).forEach(([employeeId, days]) => {
+      const employeeDays: Record<string, Set<'morning' | 'afternoon'>> = {};
+      Object.entries(days).forEach(([iso, kinds]) => {
+        employeeDays[iso] = new Set(kinds);
+      });
+      result[employeeId] = employeeDays;
     });
     return result;
   } catch {
@@ -73,9 +77,13 @@ export function loadUnavailability(): UnavailabilityMap {
 }
 
 export function saveUnavailability(unavailability: UnavailabilityMap): void {
-  const serializable: Record<string, string[]> = {};
-  Object.entries(unavailability).forEach(([employeeId, dates]) => {
-    serializable[employeeId] = [...dates];
+  const serializable: Record<string, Record<string, ('morning' | 'afternoon')[]>> = {};
+  Object.entries(unavailability).forEach(([employeeId, days]) => {
+    const employeeDays: Record<string, ('morning' | 'afternoon')[]> = {};
+    Object.entries(days).forEach(([iso, kinds]) => {
+      employeeDays[iso] = [...kinds];
+    });
+    serializable[employeeId] = employeeDays;
   });
   localStorage.setItem(UNAVAILABILITY_KEY, JSON.stringify(serializable));
 }

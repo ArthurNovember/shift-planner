@@ -481,6 +481,17 @@ select {
 .availability-table td {
   padding: 2px;
   text-align: center;
+  border-right: 1px solid var(--border);
+}
+
+.availability-table th:last-child,
+.availability-table td:last-child {
+  border-right: none;
+}
+
+.availability-table thead th {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
 }
 
 .availability-table th {
@@ -516,6 +527,34 @@ select {
 .availability-cell.unavailable {
   background: rgba(248, 113, 113, 0.18);
   border-color: var(--danger-border);
+  box-shadow: 0 0 6px rgba(248, 113, 113, 0.4);
+}
+
+.availability-cell-split {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+
+  border-radius: 4px;
+}
+
+.availability-subcell {
+  width: 16px;
+  height: 22px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--input-bg);
+  color: var(--text);
+  font-weight: 700;
+  font-size: 9px;
+  padding: 0;
+  line-height: 1;
+}
+
+.availability-subcell.unavailable {
+  background: rgba(248, 113, 113, 0.18);
+  border-color: var(--danger-border);
+  color: var(--danger-text);
   box-shadow: 0 0 6px rgba(248, 113, 113, 0.4);
 }
 

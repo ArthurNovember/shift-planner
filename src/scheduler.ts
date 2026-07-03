@@ -58,8 +58,16 @@ export function generateSchedule(
   const totalDays = daysInMonth(year, month);
   const monthIndex = year * 12 + month;
 
+  /** Whether this employee is specifically marked unavailable for one weekday shift kind. */
+  function isUnavailableForKind(employeeId: string, iso: string, kind: 'morning' | 'afternoon'): boolean {
+    return unavailability[employeeId]?.[iso]?.has(kind) ?? false;
+  }
+
+  /** Whether this employee can't work at all that day - both weekday kinds blocked (or, for a
+   * weekend date, the single day-off mark, which the UI always sets on both kinds together). */
   function isUnavailable(employeeId: string, iso: string): boolean {
-    return unavailability[employeeId]?.has(iso) ?? false;
+    const marks = unavailability[employeeId]?.[iso];
+    return !!marks && marks.has('morning') && marks.has('afternoon');
   }
 
   // --- Weekends: one employee covers both Saturday and Sunday with the weekend shift ---
@@ -287,31 +295,71 @@ export function generateSchedule(
     weekdays.forEach((d) => {
       const iso = toISODate(d);
       const working = fulltime.filter((emp) => ftWorkingDates.get(emp.id)!.has(iso));
+      const canWork = (emp: Employee, kind: 'morning' | 'afternoon') => !isUnavailableForKind(emp.id, iso, kind);
 
       if (working.length >= 2) {
         const [first, second] = working;
-        if (Math.random() < FT_TOGETHER_CHANCE) {
+        const firstM = canWork(first, 'morning');
+        const firstA = canWork(first, 'afternoon');
+        const secondM = canWork(second, 'morning');
+        const secondA = canWork(second, 'afternoon');
+        // The two ways to split the day: first on mornings + second on afternoons, or reversed.
+        const splitFirstMorning = firstM && secondA;
+        const splitSecondMorning = secondM && firstA;
+        // A kind both of them could plausibly work together, for the "together" chance below.
+        const togetherKind: 'morning' | 'afternoon' | null =
+          firstM && secondM && firstA && secondA
+            ? Math.random() < 0.5
+              ? 'morning'
+              : 'afternoon'
+            : firstM && secondM
+              ? 'morning'
+              : firstA && secondA
+                ? 'afternoon'
+                : null;
+
+        if (togetherKind && Math.random() < FT_TOGETHER_CHANCE) {
           // Both take the same shift together; the other shift becomes a gap for part-time to cover.
-          const kind: 'morning' | 'afternoon' = Math.random() < 0.5 ? 'morning' : 'afternoon';
-          const gapKind = kind === 'morning' ? 'afternoon' : 'morning';
-          assignments.push({ date: iso, employeeId: first.id, shift: SHIFTS.fulltime[kind] });
-          assignments.push({ date: iso, employeeId: second.id, shift: SHIFTS.fulltime[kind] });
-          ftTakenSlots.add(`${iso}-${kind}`);
+          const gapKind = togetherKind === 'morning' ? 'afternoon' : 'morning';
+          assignments.push({ date: iso, employeeId: first.id, shift: SHIFTS.fulltime[togetherKind] });
+          assignments.push({ date: iso, employeeId: second.id, shift: SHIFTS.fulltime[togetherKind] });
+          ftTakenSlots.add(`${iso}-${togetherKind}`);
           gaps.push({ date: iso, kind: gapKind });
-        } else {
+        } else if (splitFirstMorning && splitSecondMorning) {
+          // Either split works - alternate for variety, same as when there's no restriction.
           const morningEmp = ftFlipCounter % 2 === 0 ? first : second;
           const afternoonEmp = morningEmp === first ? second : first;
           assignments.push({ date: iso, employeeId: morningEmp.id, shift: SHIFTS.fulltime.morning });
           assignments.push({ date: iso, employeeId: afternoonEmp.id, shift: SHIFTS.fulltime.afternoon });
           ftTakenSlots.add(`${iso}-morning`);
           ftTakenSlots.add(`${iso}-afternoon`);
+        } else if (splitFirstMorning || splitSecondMorning) {
+          // Only one split is actually possible given their per-shift restrictions - use it.
+          const morningEmp = splitFirstMorning ? first : second;
+          const afternoonEmp = morningEmp === first ? second : first;
+          assignments.push({ date: iso, employeeId: morningEmp.id, shift: SHIFTS.fulltime.morning });
+          assignments.push({ date: iso, employeeId: afternoonEmp.id, shift: SHIFTS.fulltime.afternoon });
+          ftTakenSlots.add(`${iso}-morning`);
+          ftTakenSlots.add(`${iso}-afternoon`);
+        } else {
+          // Both are restricted to the same single kind this day (rare) - only one of them can
+          // actually be used, so fall back to treating it like a lone worker.
+          const solo = firstM || firstA ? first : second;
+          const soloKind: 'morning' | 'afternoon' = canWork(solo, 'morning') ? 'morning' : 'afternoon';
+          const gapKind = soloKind === 'morning' ? 'afternoon' : 'morning';
+          assignments.push({ date: iso, employeeId: solo.id, shift: SHIFTS.fulltime[soloKind] });
+          ftTakenSlots.add(`${iso}-${soloKind}`);
+          gaps.push({ date: iso, kind: gapKind });
         }
         ftFlipCounter++;
       } else if (working.length === 1) {
         const emp = working[0];
+        const canMorning = canWork(emp, 'morning');
+        const canAfternoon = canWork(emp, 'afternoon');
         const preferMorning = ftFlipCounter % 2 === 0;
-        const kind = preferMorning ? 'morning' : 'afternoon';
-        const gapKind = preferMorning ? 'afternoon' : 'morning';
+        const kind: 'morning' | 'afternoon' =
+          canMorning && canAfternoon ? (preferMorning ? 'morning' : 'afternoon') : canMorning ? 'morning' : 'afternoon';
+        const gapKind = kind === 'morning' ? 'afternoon' : 'morning';
         assignments.push({ date: iso, employeeId: emp.id, shift: SHIFTS.fulltime[kind] });
         ftTakenSlots.add(`${iso}-${kind}`);
         gaps.push({ date: iso, kind: gapKind });
@@ -349,7 +397,7 @@ export function generateSchedule(
     if (kind === 'afternoon' && ftTakenSlots.has(`${date}-afternoon`)) return false;
     const shiftHours = SHIFTS.parttime[kind].hours;
     const eligible = parttime.filter((emp) => {
-      if (isUnavailable(emp.id, date)) return false;
+      if (isUnavailableForKind(emp.id, date, kind)) return false;
       if (enforceCap && (ptHours.get(emp.id) ?? 0) + shiftHours > PARTTIME_MONTHLY_CAP) return false;
       return true;
     });
@@ -396,7 +444,7 @@ export function generateSchedule(
       claimOrder.forEach((empIndex) => {
         const emp = parttime[empIndex];
         const available = weekdays.filter(
-          (d) => !isUnavailable(emp.id, toISODate(d)) && !claimedThisWeek.has(toISODate(d)),
+          (d) => !isUnavailableForKind(emp.id, toISODate(d), 'morning') && !claimedThisWeek.has(toISODate(d)),
         );
         const { longShifts, shortShifts } = ptDayTargets.get(emp.id)!;
         let kept: Date[];
@@ -453,7 +501,7 @@ export function generateSchedule(
       for (const day of allWeekdays) {
         if ((ptHours.get(emp.id) ?? 0) + shiftHours > PARTTIME_MONTHLY_CAP) break;
         const iso = toISODate(day);
-        if (isUnavailable(emp.id, iso) || ptDatesWorked.get(emp.id)!.has(iso)) continue;
+        if (isUnavailableForKind(emp.id, iso, 'morning') || ptDatesWorked.get(emp.id)!.has(iso)) continue;
         assignments.push({ date: iso, employeeId: emp.id, shift: SHIFTS.parttime.morning });
         ptHours.set(emp.id, (ptHours.get(emp.id) ?? 0) + shiftHours);
         ptDatesWorked.get(emp.id)!.add(iso);
@@ -465,15 +513,42 @@ export function generateSchedule(
 }
 
 /** Recomputes warnings from the current assignments, so manual edits stay validated too. */
+const AVAILABILITY_KIND_LABELS: Record<'morning' | 'afternoon' | 'weekend', string> = {
+  morning: 'ranní',
+  afternoon: 'odpolední',
+  weekend: 'víkendovou',
+};
+
 export function computeWarnings(
   year: number,
   month: number,
   employees: Employee[],
   assignments: Assignment[],
+  unavailability: UnavailabilityMap = {},
 ): ScheduleWarning[] {
   if (assignments.length === 0) return [];
   const warnings: ScheduleWarning[] = [];
   const totalDays = daysInMonth(year, month);
+  const employeeById = new Map(employees.map((e) => [e.id, e]));
+
+  // Manual edits (moving/adding an assignment by hand) can put someone on a shift they've
+  // marked themselves unavailable for - the generator itself never does this, so it's only
+  // ever a sign of a manual edit worth double-checking.
+  assignments.forEach((a) => {
+    const emp = employeeById.get(a.employeeId);
+    if (!emp) return;
+    const marks = unavailability[a.employeeId]?.[a.date];
+    if (!marks) return;
+    const conflict = a.shift.kind === 'weekend' ? marks.has('morning') && marks.has('afternoon') : marks.has(a.shift.kind);
+    if (conflict) {
+      warnings.push({
+        type: 'availability-conflict',
+        employeeId: a.employeeId,
+        date: a.date,
+        message: `${emp.name}: má naplánovanou ${AVAILABILITY_KIND_LABELS[a.shift.kind]} směnu na ${a.date}, i když je ten den označen jako nedostupný.`,
+      });
+    }
+  });
 
   // Part-time monthly hour cap
   const hoursByEmployee = new Map<string, number>();
