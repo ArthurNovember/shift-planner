@@ -2,6 +2,7 @@ import type { Assignment, Employee, ScheduleOptions, ScheduleWarning, ShiftDefin
 import {
   FT_SHORT_WEEK_REDUCTION,
   FT_TOGETHER_CHANCE,
+  FULLTIME_HOURS_TOLERANCE,
   FULLTIME_TARGET_HOURS,
   PARTTIME_MONTHLY_CAP,
   PT_REGULAR_LONG_WEEK_SHIFTS,
@@ -70,37 +71,98 @@ export function generateSchedule(
     }
   }
 
-  const weekendEmployeeByWeekKey = new Map<string, string>();
-  if (employees.length > 0) {
-    const weekendStart = monthIndex % employees.length;
-    weekendPairs.forEach((pair, idx) => {
-      const satIso = toISODate(pair.saturday);
-      const sunIso = toISODate(pair.sunday);
-      const weekKey = toISODate(mondayOf(pair.saturday));
-      const start = (weekendStart + idx) % employees.length;
+  // The same person always covers both Saturday and Sunday of a weekend - never split across
+  // two different people. Every employee should get exactly one weekend turn a month whenever
+  // that's physically possible - a simple one-pass round-robin can't discover that, though: if
+  // someone's expected turn lands on a weekend they're unavailable for, a one-pass assignment
+  // just skips them for the rest of the month even when swapping them onto a *different* weekend
+  // (and shuffling whoever had that one) would have covered everyone. This runs a small
+  // bipartite matching (Kuhn's algorithm, employees vs. weekend pairs - tiny N so a plain DFS
+  // with augmenting paths is instant) to find the assignment that covers the most pairs with
+  // distinct people. Only genuine overflow (more weekend pairs than employees in a month, e.g. a
+  // 31-day month with 5 Saturdays) falls back to giving someone a second turn, and even then
+  // it's whoever currently has the fewest, so repeats rotate fairly across different months.
+  const weekendEmployeeByWeekKey = new Map<string, Set<string>>();
 
-      let chosen: Employee | undefined;
-      for (let k = 0; k < employees.length; k++) {
-        const candidate = employees[(start + k) % employees.length];
-        if (!isUnavailable(candidate.id, satIso) && !isUnavailable(candidate.id, sunIso)) {
-          chosen = candidate;
-          break;
+  if (employees.length > 0 && weekendPairs.length > 0) {
+    const weekendStart = monthIndex % employees.length;
+    const n = employees.length;
+    const m = weekendPairs.length;
+    const satIsos = weekendPairs.map((p) => toISODate(p.saturday));
+    const sunIsos = weekendPairs.map((p) => toISODate(p.sunday));
+
+    // Preferred candidate order per pair (round-robin), so the matching still favors the usual
+    // rotation whenever there's no conflict forcing a swap.
+    const candidateOrder: number[][] = weekendPairs.map((_, idx) => {
+      const start = (weekendStart + idx) % n;
+      return Array.from({ length: n }, (_, k) => (start + k) % n);
+    });
+
+    const availableFor = (pairIdx: number, empIdx: number): boolean =>
+      !isUnavailable(employees[empIdx].id, satIsos[pairIdx]) && !isUnavailable(employees[empIdx].id, sunIsos[pairIdx]);
+
+    const matchEmployeeOfPair = new Array<number>(m).fill(-1);
+    const matchPairOfEmployee = new Array<number>(n).fill(-1);
+
+    function tryAugment(pairIdx: number, visited: boolean[]): boolean {
+      for (const empIdx of candidateOrder[pairIdx]) {
+        if (visited[empIdx] || !availableFor(pairIdx, empIdx)) continue;
+        visited[empIdx] = true;
+        if (matchPairOfEmployee[empIdx] === -1 || tryAugment(matchPairOfEmployee[empIdx], visited)) {
+          matchPairOfEmployee[empIdx] = pairIdx;
+          matchEmployeeOfPair[pairIdx] = empIdx;
+          return true;
         }
       }
+      return false;
+    }
 
-      if (chosen) {
-        assignments.push({ date: satIso, employeeId: chosen.id, shift: WEEKEND_SHIFT });
-        assignments.push({ date: sunIso, employeeId: chosen.id, shift: WEEKEND_SHIFT });
-        weekendEmployeeByWeekKey.set(weekKey, chosen.id);
-      } else {
-        // nobody is free for the whole weekend: cover each day independently if possible
-        const satEmp = employees.find((e) => !isUnavailable(e.id, satIso));
-        const sunEmp = employees.find((e) => !isUnavailable(e.id, sunIso));
-        if (satEmp) assignments.push({ date: satIso, employeeId: satEmp.id, shift: WEEKEND_SHIFT });
-        if (sunEmp) assignments.push({ date: sunIso, employeeId: sunEmp.id, shift: WEEKEND_SHIFT });
-        if (satEmp) weekendEmployeeByWeekKey.set(weekKey, satEmp.id);
+    for (let pairIdx = 0; pairIdx < m; pairIdx++) {
+      tryAugment(pairIdx, new Array(n).fill(false));
+    }
+
+    const weekendCredits = new Map<string, number>();
+    employees.forEach((e) => weekendCredits.set(e.id, 0));
+
+    function assignPair(pairIdx: number, emp: Employee): void {
+      const weekKey = toISODate(mondayOf(weekendPairs[pairIdx].saturday));
+      assignments.push({ date: satIsos[pairIdx], employeeId: emp.id, shift: WEEKEND_SHIFT });
+      assignments.push({ date: sunIsos[pairIdx], employeeId: emp.id, shift: WEEKEND_SHIFT });
+      if (!weekendEmployeeByWeekKey.has(weekKey)) weekendEmployeeByWeekKey.set(weekKey, new Set());
+      weekendEmployeeByWeekKey.get(weekKey)!.add(emp.id);
+      weekendCredits.set(emp.id, weekendCredits.get(emp.id)! + 1);
+    }
+
+    for (let pairIdx = 0; pairIdx < m; pairIdx++) {
+      if (matchEmployeeOfPair[pairIdx] !== -1) assignPair(pairIdx, employees[matchEmployeeOfPair[pairIdx]]);
+    }
+
+    // Any pair the matching couldn't cover (genuine overflow, or nobody free either day) falls
+    // back to whoever currently has the fewest weekend turns credited so far.
+    for (let pairIdx = 0; pairIdx < m; pairIdx++) {
+      if (matchEmployeeOfPair[pairIdx] !== -1) continue;
+      let best: Employee | undefined;
+      let bestCredits = Infinity;
+      for (const empIdx of candidateOrder[pairIdx]) {
+        if (!availableFor(pairIdx, empIdx)) continue;
+        const credits = weekendCredits.get(employees[empIdx].id)!;
+        if (credits < bestCredits) {
+          bestCredits = credits;
+          best = employees[empIdx];
+        }
       }
-    });
+      if (!best) {
+        // Literally nobody is free either day: cover it anyway as an absolute last resort.
+        for (const empIdx of candidateOrder[pairIdx]) {
+          const credits = weekendCredits.get(employees[empIdx].id)!;
+          if (credits < bestCredits) {
+            bestCredits = credits;
+            best = employees[empIdx];
+          }
+        }
+      }
+      if (best) assignPair(pairIdx, best);
+    }
   }
 
   // --- Group this month's weekdays by the Monday that starts their calendar week ---
@@ -116,25 +178,63 @@ export function generateSchedule(
   const orderedWeekKeys = [...weekdaysByWeekKey.keys()].sort();
 
   function isShortWeek(employeeId: string, weekKey: string): boolean {
-    return weekendEmployeeByWeekKey.get(weekKey) === employeeId;
+    return weekendEmployeeByWeekKey.get(weekKey)?.has(employeeId) ?? false;
   }
 
-  // --- Fulltime: work backwards from the ~160h/month target to figure out how many days a
-  //     week each FT actually needs, so the total lands close to it regardless of how many
-  //     weeks/weekdays this particular month has. A week where they cover the weekend (~19h)
-  //     gets fewer weekday shifts, to rest around that extra load. ---
-  const weeksCount = Math.max(1, orderedWeekKeys.length);
-  const ftDayTargets = new Map<string, { longDays: number; shortDays: number }>();
+  // --- Fulltime: work backwards from the ~160h/month target to figure out how many days
+  //     each week an FT actually needs, so the monthly total lands as close as possible to
+  //     it regardless of how many weeks/weekdays this particular month has. The month's
+  //     total day target is rounded only ONCE, then handed out to weeks one day at a time
+  //     (always to whichever week currently has the fewest days assigned, within its real
+  //     capacity) - rounding a per-week count and reusing it for every week would multiply
+  //     that rounding error by the number of weeks, and short/fringe weeks with fewer actual
+  //     weekdays need their real capacity respected or the shortfall silently disappears
+  //     instead of moving to a week that has room. A week where they cover the weekend
+  //     (~19h) has its capacity reduced by a fixed handful, to rest around that extra load. ---
+  // Weekend hours actually landing on each employee this month, read straight off the real
+  // assignments rather than re-derived from week keys - a weekend pair's own calendar week
+  // (Mon-Fri) can fall entirely in the previous/next month (e.g. a Saturday on the 1st), in
+  // which case it has no entry in orderedWeekKeys at all, and re-deriving from week keys would
+  // silently drop that weekend's hours from the target instead of discounting them.
+  const weekendHoursByEmployee = new Map<string, number>();
+  assignments.forEach((a) => {
+    if (a.shift.kind !== 'weekend') return;
+    weekendHoursByEmployee.set(a.employeeId, (weekendHoursByEmployee.get(a.employeeId) ?? 0) + a.shift.hours);
+  });
+
+  const ftWeekTargets = new Map<string, Map<string, number>>(); // employeeId -> weekKey -> target days
   fulltime.forEach((emp) => {
-    const shortWeeksCount = orderedWeekKeys.filter((wk) => isShortWeek(emp.id, wk)).length;
-    const weekendHours = shortWeeksCount * WEEKEND_SHIFT.hours * 2;
-    const targetTotalDays = Math.round(Math.max(0, FULLTIME_TARGET_HOURS - weekendHours) / SHIFTS.fulltime.morning.hours);
-    const longDays = Math.min(
-      5,
-      Math.max(0, Math.round((targetTotalDays + FT_SHORT_WEEK_REDUCTION * shortWeeksCount) / weeksCount)),
-    );
-    const shortDays = Math.max(0, longDays - FT_SHORT_WEEK_REDUCTION);
-    ftDayTargets.set(emp.id, { longDays, shortDays });
+    const weekendHours = weekendHoursByEmployee.get(emp.id) ?? 0;
+    const idealTotalDays = Math.max(0, FULLTIME_TARGET_HOURS - weekendHours) / SHIFTS.fulltime.morning.hours;
+    const totalTargetDays = Math.round(idealTotalDays);
+
+    const capacity = new Map<string, number>();
+    orderedWeekKeys.forEach((wk) => {
+      const availableCount = weekdaysByWeekKey.get(wk)!.filter((d) => !isUnavailable(emp.id, toISODate(d))).length;
+      const cap = Math.min(5, availableCount);
+      capacity.set(wk, isShortWeek(emp.id, wk) ? Math.max(0, cap - FT_SHORT_WEEK_REDUCTION) : cap);
+    });
+
+    const totalCapacity = [...capacity.values()].reduce((a, b) => a + b, 0);
+    let remaining = Math.min(totalTargetDays, totalCapacity);
+
+    const weekTargets = new Map<string, number>();
+    orderedWeekKeys.forEach((wk) => weekTargets.set(wk, 0));
+    while (remaining > 0) {
+      let bestWeek: string | null = null;
+      let bestAssigned = Infinity;
+      for (const wk of orderedWeekKeys) {
+        const assigned = weekTargets.get(wk)!;
+        if (assigned < capacity.get(wk)! && assigned < bestAssigned) {
+          bestAssigned = assigned;
+          bestWeek = wk;
+        }
+      }
+      if (!bestWeek) break;
+      weekTargets.set(bestWeek, weekTargets.get(bestWeek)! + 1);
+      remaining--;
+    }
+    ftWeekTargets.set(emp.id, weekTargets);
   });
 
   // One FT always trims days off from the Friday side, the other from the Monday side, so
@@ -146,8 +246,7 @@ export function generateSchedule(
     const weekdays = weekdaysByWeekKey.get(weekKey)!;
     fulltime.forEach((emp, empIndex) => {
       const available = weekdays.filter((d) => !isUnavailable(emp.id, toISODate(d)));
-      const { longDays, shortDays } = ftDayTargets.get(emp.id)!;
-      const target = isShortWeek(emp.id, weekKey) ? shortDays : longDays;
+      const target = ftWeekTargets.get(emp.id)!.get(weekKey) ?? 0;
       const offCount = Math.max(0, available.length - target);
       // even index: trim off days from the end (Friday side); odd index: from the start (Monday side)
       const kept =
@@ -328,13 +427,37 @@ export function generateSchedule(
   }
 
   if (parttime.length > 0) {
-    // Part-time only steps into a weekday shift as the exception, not the rule: covering a
-    // gap left when fulltime genuinely can't be there (their short week, or both off). It's
-    // never added just to pad hours toward the cap on a day fulltime already has covered.
+    // Fulltime gaps (their short week, or both off) come first - this is the coverage that
+    // actually needs filling, so it takes priority over topping up anyone's hours.
     gaps.forEach((gap) => {
       let ok = assignPtSlot(gap.date, gap.kind, true, false);
       if (!ok) ok = assignPtSlot(gap.date, gap.kind, false, false);
       if (!ok) assignPtSlot(gap.date, gap.kind, false, true);
+    });
+  }
+
+  // Top up each part-timer's hours toward the ~80h cap, same idea as fulltime working backward
+  // from its own target: gaps alone rarely add up to that much, so once they're covered, each
+  // part-timer picks up extra morning support shifts (fulltime is typically already there - that
+  // overlap is fine, same as it is for gap coverage) on any day they aren't already working,
+  // until they'd cross the cap. This can land both part-timers on the same morning together;
+  // that's intentional; there just aren't enough weekdays in a month to keep every support shift
+  // exclusive to one person and still get both close to their target. Regularity mode opts out -
+  // it deliberately keeps a light, fixed quota instead of hunting for the cap.
+  if (parttime.length > 0 && !options.ptRegularityMode) {
+    const allWeekdays: Date[] = [];
+    orderedWeekKeys.forEach((wk) => allWeekdays.push(...weekdaysByWeekKey.get(wk)!));
+    const shiftHours = SHIFTS.parttime.morning.hours;
+
+    parttime.forEach((emp) => {
+      for (const day of allWeekdays) {
+        if ((ptHours.get(emp.id) ?? 0) + shiftHours > PARTTIME_MONTHLY_CAP) break;
+        const iso = toISODate(day);
+        if (isUnavailable(emp.id, iso) || ptDatesWorked.get(emp.id)!.has(iso)) continue;
+        assignments.push({ date: iso, employeeId: emp.id, shift: SHIFTS.parttime.morning });
+        ptHours.set(emp.id, (ptHours.get(emp.id) ?? 0) + shiftHours);
+        ptDatesWorked.get(emp.id)!.add(iso);
+      }
     });
   }
 
@@ -358,6 +481,9 @@ export function computeWarnings(
     hoursByEmployee.set(a.employeeId, (hoursByEmployee.get(a.employeeId) ?? 0) + a.shift.hours);
   });
 
+  // The generator deliberately keeps part-time hours close to the cap (see the hour top-up
+  // above), so sitting near it is the normal, intended state - only actually going over it
+  // (which only manual edits after generation can cause) is worth flagging.
   employees
     .filter((e) => e.type === 'parttime')
     .forEach((emp) => {
@@ -369,11 +495,24 @@ export function computeWarnings(
           employeeId: emp.id,
           message: `${emp.name}: naplánováno ${hours.toFixed(1)} h, limit je ${PARTTIME_MONTHLY_CAP} h (přebytek ${over.toFixed(1)} h). Zvažte převod přebytku do dalšího měsíce.`,
         });
-      } else if (hours > PARTTIME_MONTHLY_CAP * 0.9) {
+      }
+    });
+
+  // Fulltime monthly hour target - a two-sided target rather than a hard cap (some months
+  // land a bit under, some a bit over, by design), so only flag a genuinely large drift.
+  employees
+    .filter((e) => e.type === 'fulltime')
+    .forEach((emp) => {
+      const hours = hoursByEmployee.get(emp.id) ?? 0;
+      const diff = hours - FULLTIME_TARGET_HOURS;
+      if (Math.abs(diff) > FULLTIME_HOURS_TOLERANCE) {
         warnings.push({
-          type: 'pt-hours-near-limit',
+          type: 'ft-hours-deviation',
           employeeId: emp.id,
-          message: `${emp.name}: naplánováno ${hours.toFixed(1)} h, blíží se limitu ${PARTTIME_MONTHLY_CAP} h.`,
+          message:
+            diff > 0
+              ? `${emp.name}: naplánováno ${hours.toFixed(1)} h, cíl je ${FULLTIME_TARGET_HOURS} h (přebytek ${diff.toFixed(1)} h).`
+              : `${emp.name}: naplánováno ${hours.toFixed(1)} h, cíl je ${FULLTIME_TARGET_HOURS} h (podstav ${Math.abs(diff).toFixed(1)} h).`,
         });
       }
     });

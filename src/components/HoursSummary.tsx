@@ -1,5 +1,5 @@
 import type { Employee } from '../types';
-import { PARTTIME_MONTHLY_CAP } from '../types';
+import { FULLTIME_HOURS_TOLERANCE, FULLTIME_TARGET_HOURS, PARTTIME_MONTHLY_CAP } from '../types';
 import { employeeColor } from '../colors';
 
 interface Props {
@@ -23,7 +23,10 @@ export function HoursSummary({ employees, hoursByEmployee }: Props) {
         <tbody>
           {employees.map((emp) => {
             const hours = hoursByEmployee.get(emp.id) ?? 0;
-            const over = emp.type === 'parttime' && hours > PARTTIME_MONTHLY_CAP;
+            const over =
+              emp.type === 'parttime'
+                ? hours > PARTTIME_MONTHLY_CAP
+                : Math.abs(hours - FULLTIME_TARGET_HOURS) > FULLTIME_HOURS_TOLERANCE;
             return (
               <tr key={emp.id}>
                 <td>
@@ -31,7 +34,7 @@ export function HoursSummary({ employees, hoursByEmployee }: Props) {
                   {emp.name}
                 </td>
                 <td className={over ? 'over-limit' : undefined}>{hours.toFixed(1)} h</td>
-                <td>{emp.type === 'parttime' ? `${PARTTIME_MONTHLY_CAP} h` : '–'}</td>
+                <td>{emp.type === 'parttime' ? `${PARTTIME_MONTHLY_CAP} h` : `~${FULLTIME_TARGET_HOURS} h`}</td>
               </tr>
             );
           })}

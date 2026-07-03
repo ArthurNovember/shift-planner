@@ -6,8 +6,8 @@ interface Props {
 
 const SEVERITY: Record<ScheduleWarning['type'], 'high' | 'medium'> = {
   'pt-hours-exceeded': 'high',
+  'ft-hours-deviation': 'high',
   'coverage-gap': 'high',
-  'pt-hours-near-limit': 'medium',
   'weekend-uneven': 'medium',
 };
 

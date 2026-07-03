@@ -23,7 +23,7 @@ export interface Assignment {
 
 export type WarningType =
   | 'pt-hours-exceeded'
-  | 'pt-hours-near-limit'
+  | 'ft-hours-deviation'
   | 'weekend-uneven'
   | 'coverage-gap';
 
@@ -60,6 +60,12 @@ export const PARTTIME_MONTHLY_CAP = 80;
  * to decide how many days a week they need, so the total lands close to it every month
  * regardless of how many weekdays/weekends that particular month happens to have. */
 export const FULLTIME_TARGET_HOURS = 160;
+
+/** How far a fulltime employee's actual monthly hours may drift from the target before it's
+ * flagged - the generator only balances to the day (8.5h chunks) and occasionally has to give
+ * someone a second weekend in a month with 5 Saturdays, so some drift is normal; this catches
+ * genuinely large deviations without flagging every ordinary month. */
+export const FULLTIME_HOURS_TOLERANCE = 15;
 
 /** A week where the employee covers the weekend (~19h) gets this many fewer weekday shifts,
  * to balance out that extra weekend load and give them a real rest around it. */
