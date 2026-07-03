@@ -698,6 +698,10 @@ select {
   box-shadow: none;
 }
 
+[data-theme="light"] .orbit-ring {
+  border-color: rgba(15, 23, 42, 0.35);
+}
+
 [data-theme="light"] .orbit-ring .planet {
   box-shadow: none !important;
 }
