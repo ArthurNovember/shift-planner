@@ -1,5 +1,5 @@
 .app {
-  max-width: 1400px;
+  min-width: 100%;
   margin: 0 auto;
   padding: 24px;
   text-align: left;
@@ -99,7 +99,7 @@
   transition: background 0.2s ease;
 }
 
-.theme-toggle[aria-checked='true'] .theme-toggle-track {
+.theme-toggle[aria-checked="true"] .theme-toggle-track {
   background: var(--accent);
 }
 
@@ -112,10 +112,13 @@
   border-radius: 50%;
   background: var(--gold);
   box-shadow: 0 0 6px 1px rgba(251, 191, 36, 0.5);
-  transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    background 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
-.theme-toggle[aria-checked='true'] .theme-toggle-thumb {
+.theme-toggle[aria-checked="true"] .theme-toggle-thumb {
   transform: translateX(20px);
   background: #ffffff;
   box-shadow: 0 0 6px 1px rgba(255, 255, 255, 0.6);
@@ -201,6 +204,11 @@ button {
   font-size: 13px;
   font-weight: 600;
   color: var(--accent-text);
+}
+
+.secondary-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .icon-btn {
@@ -569,12 +577,12 @@ select {
   transform: translate(-50%, -50%);
 }
 
-[data-theme='light'] .orbit-core {
+[data-theme="light"] .orbit-core {
   background: var(--gold);
   box-shadow: none;
 }
 
-[data-theme='light'] .orbit-ring .planet {
+[data-theme="light"] .orbit-ring .planet {
   box-shadow: none !important;
 }
 

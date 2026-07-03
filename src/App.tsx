@@ -129,6 +129,16 @@ function App() {
     );
   }
 
+  function handleExportPdf() {
+    import("./pdfExport")
+      .then(({ exportScheduleToPdf }) =>
+        exportScheduleToPdf(year, month, employees, assignments),
+      )
+      .catch(() => {
+        window.alert("Export do PDF se nezdařil. Zkuste to prosím znovu.");
+      });
+  }
+
   function handleToggleUnavailable(employeeId: string, iso: string) {
     setUnavailability((prev) => {
       const current = new Set(prev[employeeId] ?? []);
@@ -238,6 +248,14 @@ function App() {
             />
             Pravidelné směny pro poloviční úvazek
           </label>
+          <button
+            type="button"
+            className="secondary-btn"
+            onClick={handleExportPdf}
+            disabled={assignments.length === 0}
+          >
+            Stáhnout PDF
+          </button>
           <button
             type="button"
             className="primary-btn"
