@@ -24,9 +24,7 @@ export function HoursSummary({ employees, hoursByEmployee }: Props) {
           {employees.map((emp) => {
             const hours = hoursByEmployee.get(emp.id) ?? 0;
             const over =
-              emp.type === 'parttime'
-                ? hours > PARTTIME_MONTHLY_CAP
-                : Math.abs(hours - FULLTIME_TARGET_HOURS) > FULLTIME_HOURS_TOLERANCE;
+              emp.type === 'parttime' ? hours > PARTTIME_MONTHLY_CAP : hours - FULLTIME_TARGET_HOURS > FULLTIME_HOURS_TOLERANCE;
             return (
               <tr key={emp.id}>
                 <td>
