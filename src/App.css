@@ -1,5 +1,6 @@
 .app {
   min-width: 100%;
+  max-width: 100%;
   margin: 0 auto;
   padding: 24px;
   text-align: left;
@@ -13,9 +14,13 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 16px;
-  margin-bottom: 28px;
-  padding-bottom: 20px;
+  margin: 0 -24px 28px;
+  padding: 16px 24px 20px;
   border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--bg);
 }
 
 .app-header h1 {
@@ -126,16 +131,39 @@
 
 .app-layout {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 320px 1fr 300px;
   gap: 20px;
   align-items: stretch;
   margin-bottom: 20px;
+}
+
+@media (max-width: 1200px) {
+  .app-layout {
+    grid-template-columns: 320px 1fr;
+  }
+
+  .warnings-column {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 900px) {
   .app-layout {
     grid-template-columns: 1fr;
   }
+
+  .warnings-column {
+    grid-column: auto;
+  }
+}
+
+.warnings-column {
+  display: flex;
+  flex-direction: column;
+}
+
+.availability-panel {
+  margin-bottom: 20px;
 }
 
 .sidebar {

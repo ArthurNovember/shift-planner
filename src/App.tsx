@@ -296,7 +296,6 @@ function App() {
       <div className="app-layout">
         <aside className="sidebar">
           <EmployeeManager employees={employees} onChange={setEmployees} />
-          <WarningsPanel warnings={warnings} />
           <HoursSummary
             employees={employees}
             hoursByEmployee={hoursByEmployee}
@@ -304,20 +303,25 @@ function App() {
         </aside>
 
         <main className="main-content">
-          <AvailabilityGrid
-            year={year}
-            month={month}
-            employees={employees}
-            unavailability={unavailability}
-            onToggle={handleToggleUnavailable}
-          />
           <SpaceScene
             workingEmployees={workingEmployees}
             employees={employees}
             todayAssignments={todayAssignments}
           />
         </main>
+
+        <aside className="warnings-column">
+          <WarningsPanel warnings={warnings} />
+        </aside>
       </div>
+
+      <AvailabilityGrid
+        year={year}
+        month={month}
+        employees={employees}
+        unavailability={unavailability}
+        onToggle={handleToggleUnavailable}
+      />
 
       {assignments.length === 0 ? (
         <section className="panel">
