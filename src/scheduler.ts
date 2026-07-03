@@ -328,26 +328,14 @@ export function generateSchedule(
   }
 
   if (parttime.length > 0) {
-    // Priority 1: cover gaps left by fulltime's short week (mandatory coverage - allowed to
-    // double someone up or slip past the cap as a last resort, since the shift must be covered)
+    // Part-time only steps into a weekday shift as the exception, not the rule: covering a
+    // gap left when fulltime genuinely can't be there (their short week, or both off). It's
+    // never added just to pad hours toward the cap on a day fulltime already has covered.
     gaps.forEach((gap) => {
       let ok = assignPtSlot(gap.date, gap.kind, true, false);
       if (!ok) ok = assignPtSlot(gap.date, gap.kind, false, false);
       if (!ok) assignPtSlot(gap.date, gap.kind, false, true);
     });
-
-    // Priority 2: keep adding morning support shifts - even on days fulltime already covers
-    // the morning - spreading across the month until every part-timer nears the cap. The
-    // afternoon is never doubled up, so it only gets filled here through leftover gaps above.
-    // Optional, so a day is simply skipped rather than giving someone a second shift that day.
-    // Skipped in regularity mode, since the fixed pattern above already covers their hours.
-    if (!options.ptRegularityMode) {
-      orderedWeekKeys.forEach((weekKey) => {
-        weekdaysByWeekKey.get(weekKey)!.forEach((d) => {
-          assignPtSlot(toISODate(d), 'morning', true, false);
-        });
-      });
-    }
   }
 
   return assignments;
