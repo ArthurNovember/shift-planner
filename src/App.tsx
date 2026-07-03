@@ -111,6 +111,14 @@ function App() {
       .map((e) => ({ id: e.id, color: employeeColor(e.id, employeeIds) }));
   }, [schedules, employees]);
 
+  const todayAssignments = useMemo(() => {
+    const now = new Date();
+    const todayKey = monthKey(now.getFullYear(), now.getMonth());
+    const todaySchedule = schedules[todayKey] ?? [];
+    const todayISO = toISODate(now);
+    return todaySchedule.filter((a) => a.date === todayISO);
+  }, [schedules]);
+
   function setAssignments(next: Assignment[]) {
     setSchedules((prev) => ({ ...prev, [key]: next }));
   }
@@ -286,7 +294,11 @@ function App() {
             unavailability={unavailability}
             onToggle={handleToggleUnavailable}
           />
-          <SpaceScene workingEmployees={workingEmployees} />
+          <SpaceScene
+            workingEmployees={workingEmployees}
+            employees={employees}
+            todayAssignments={todayAssignments}
+          />
         </main>
       </div>
 
