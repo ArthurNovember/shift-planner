@@ -9,6 +9,7 @@ interface Props {
   employees: Employee[];
   assignments: Assignment[];
   onUpdateAssignmentEmployee: (index: number, newEmployeeId: string) => void;
+  onUpdateAssignmentKind: (index: number, kind: 'morning' | 'afternoon') => void;
   onUpdateAssignmentTime: (index: number, field: 'start' | 'end', value: string) => void;
   onRemoveAssignment: (index: number) => void;
   onAddAssignment: (date: string, employeeId: string, shift: ShiftDefinition) => void;
@@ -79,6 +80,7 @@ export function CalendarGrid({
   employees,
   assignments,
   onUpdateAssignmentEmployee,
+  onUpdateAssignmentKind,
   onUpdateAssignmentTime,
   onRemoveAssignment,
   onAddAssignment,
@@ -121,7 +123,19 @@ export function CalendarGrid({
                 {dayItems.map(({ a, i }) => (
                   <div key={i} className="shift-block" style={{ borderColor: employeeColor(a.employeeId, employees) }}>
                     <div className="shift-time-row">
-                      <span className="shift-kind-label">{SHIFT_LABELS[a.shift.kind]}</span>
+                      {a.shift.kind === 'weekend' ? (
+                        <span className="shift-kind-label">{SHIFT_LABELS[a.shift.kind]}</span>
+                      ) : (
+                        <select
+                          className="shift-kind-select"
+                          value={a.shift.kind}
+                          onChange={(e) => onUpdateAssignmentKind(i, e.target.value as 'morning' | 'afternoon')}
+                          aria-label="Typ směny"
+                        >
+                          <option value="morning">Ranní</option>
+                          <option value="afternoon">Odpolední</option>
+                        </select>
+                      )}
                       <input
                         type="time"
                         className="shift-time-input"

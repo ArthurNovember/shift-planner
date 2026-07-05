@@ -59,10 +59,9 @@
 }
 
 .app-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
   gap: 16px;
   margin: 0 -24px 28px;
   padding: 16px 24px 20px;
@@ -71,6 +70,19 @@
   top: 0;
   z-index: 20;
   background: var(--bg);
+}
+
+.app-header-left {
+  min-width: 0;
+}
+
+.app-header-right {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  justify-self: end;
+  gap: 12px;
 }
 
 .app-header h1 {
@@ -120,6 +132,28 @@
   font-size: 13px;
   color: var(--text-h);
   white-space: nowrap;
+}
+
+.ics-export {
+  display: flex;
+  align-items: stretch;
+  border: 1.5px solid var(--accent-text);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.ics-export select {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent-text);
+  border-right: 1.5px solid var(--accent-text);
+  font-weight: 600;
+}
+
+.ics-export .secondary-btn {
+  border: none;
+  border-radius: 0;
 }
 
 .theme-toggle {
@@ -175,6 +209,15 @@
   margin-top: 28px;
   padding-top: 18px;
   border-top: 1px solid var(--border);
+}
+
+.export-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
 }
 
 .theme-toggle-label {
@@ -639,6 +682,14 @@ select {
   margin-right: 2px;
 }
 
+.shift-kind-select {
+  font-weight: 600;
+  color: var(--text-h);
+  margin-right: 2px;
+  font-size: 11px;
+  padding: 1px 2px;
+}
+
 .shift-time-input {
   font-size: 11px;
   padding: 1px 2px;
@@ -935,9 +986,11 @@ select {
   }
 
   .app-header {
+    grid-template-columns: 1fr;
     margin: 0 -14px 20px;
     padding: 12px 14px 16px;
     gap: 10px;
+    position: static;
   }
 
   .app-header h1 {
@@ -951,7 +1004,12 @@ select {
 
   .month-nav {
     gap: 8px;
-    width: 100%;
+    justify-content: center;
+  }
+
+  .app-header-right {
+    justify-content: center;
+    justify-self: stretch;
   }
 
   .month-label {
@@ -997,7 +1055,8 @@ select {
     padding: 8px 10px;
   }
 
-  .shift-kind-label {
+  .shift-kind-label,
+  .shift-kind-select {
     font-size: 13px;
   }
 

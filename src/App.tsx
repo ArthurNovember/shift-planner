@@ -72,6 +72,7 @@ function AppContent() {
   const [schedules, setSchedules] = useState<SchedulesMap>({});
   const [unavailability, setUnavailability] = useState<UnavailabilityMap>({});
   const [ptLongShortWeek, setPtLongShortWeek] = useState(false);
+  const [icsEmployeeId, setIcsEmployeeId] = useState("all");
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
   const [loaded, setLoaded] = useState(false);
   const [saveError, setSaveError] = useState(false);
@@ -214,6 +215,22 @@ function AppContent() {
       });
   }
 
+  function handleExportIcs() {
+    import("./icsExport")
+      .then(({ exportScheduleToIcs }) =>
+        exportScheduleToIcs(
+          year,
+          month,
+          employees,
+          assignments,
+          icsEmployeeId === "all" ? null : icsEmployeeId,
+        ),
+      )
+      .catch(() => {
+        window.alert("Export kalendáře se nezdařil. Zkuste to prosím znovu.");
+      });
+  }
+
   function handleToggleUnavailable(
     employeeId: string,
     iso: string,
@@ -254,6 +271,14 @@ function AppContent() {
           }
         : a,
     );
+    setAssignments(next);
+  }
+
+  function handleUpdateAssignmentKind(index: number, kind: "morning" | "afternoon") {
+    const a = assignments[index];
+    const employee = employees.find((e) => e.id === a.employeeId);
+    if (!employee) return;
+    const next = assignments.map((x, i) => (i === index ? { ...x, shift: shiftForEmployee(employee, kind) } : x));
     setAssignments(next);
   }
 
@@ -317,7 +342,7 @@ function AppContent() {
         </div>
       )}
       <header className="app-header">
-        <div>
+        <div className="app-header-left">
           <h1>
             Plánovač <span className="accent">směn</span>
           </h1>
@@ -344,6 +369,8 @@ function AppContent() {
           >
             ›
           </button>
+        </div>
+        <div className="app-header-right">
           <label
             className="regularity-toggle"
             title="Víkend se počítá jako 19 h, zbylých ~61 h do 80h stropu se rovnoměrně rozloží do týdnů v měsíci"
@@ -362,14 +389,6 @@ function AppContent() {
               </span>
             </button>
           </label>
-          <button
-            type="button"
-            className="secondary-btn"
-            onClick={handleExportPdf}
-            disabled={assignments.length === 0}
-          >
-            Stáhnout PDF
-          </button>
           <button
             type="button"
             className="primary-btn"
@@ -426,11 +445,45 @@ function AppContent() {
           employees={employees}
           assignments={assignments}
           onUpdateAssignmentEmployee={handleUpdateAssignmentEmployee}
+          onUpdateAssignmentKind={handleUpdateAssignmentKind}
           onUpdateAssignmentTime={handleUpdateAssignmentTime}
           onRemoveAssignment={handleRemoveAssignment}
           onAddAssignment={handleAddAssignment}
         />
       )}
+
+      <div className="export-bar">
+        <button
+          type="button"
+          className="secondary-btn"
+          onClick={handleExportPdf}
+          disabled={assignments.length === 0}
+        >
+          Stáhnout PDF
+        </button>
+        <span className="ics-export">
+          <select
+            value={icsEmployeeId}
+            onChange={(e) => setIcsEmployeeId(e.target.value)}
+            aria-label="Pro koho stáhnout kalendář"
+          >
+            <option value="all">Všichni</option>
+            {employees.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.name}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="secondary-btn"
+            onClick={handleExportIcs}
+            disabled={assignments.length === 0}
+          >
+            Stáhnout kalendář
+          </button>
+        </span>
+      </div>
 
       <footer className="app-footer">
         <span className="theme-toggle-label">
