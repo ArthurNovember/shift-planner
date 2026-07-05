@@ -23,7 +23,6 @@ export function SpaceScene({
   employees,
   todayAssignments,
 }: Props) {
-  const ids = employees.map((e) => e.id);
   const employeeById = new Map(employees.map((e) => [e.id, e]));
   const sorted = [...todayAssignments].sort((a, b) =>
     a.shift.start.localeCompare(b.shift.start),
@@ -44,7 +43,7 @@ export function SpaceScene({
                 <li key={i} className="today-shift-row">
                   <span
                     className="color-dot"
-                    style={{ background: employeeColor(emp.id, ids) }}
+                    style={{ background: employeeColor(emp.id, employees) }}
                   />
                   <span className="today-shift-name">{emp.name}</span>
                   <span className="today-shift-kind">

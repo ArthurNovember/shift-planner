@@ -83,7 +83,6 @@ export function CalendarGrid({
   onRemoveAssignment,
   onAddAssignment,
 }: Props) {
-  const ids = employees.map((e) => e.id);
   const totalDays = daysInMonth(year, month);
   const firstDow = (new Date(year, month, 1).getDay() + 6) % 7; // Monday = 0
 
@@ -117,7 +116,7 @@ export function CalendarGrid({
               <div className="calendar-cell-date">{day}</div>
               <div className="calendar-cell-shifts">
                 {dayItems.map(({ a, i }) => (
-                  <div key={i} className="shift-block" style={{ borderColor: employeeColor(a.employeeId, ids) }}>
+                  <div key={i} className="shift-block" style={{ borderColor: employeeColor(a.employeeId, employees) }}>
                     <div className="shift-time-row">
                       <span className="shift-kind-label">{SHIFT_LABELS[a.shift.kind]}</span>
                       <input
@@ -141,7 +140,7 @@ export function CalendarGrid({
                       <select
                         value={a.employeeId}
                         onChange={(e) => onUpdateAssignmentEmployee(i, e.target.value)}
-                        style={{ color: employeeColor(a.employeeId, ids) }}
+                        style={{ color: employeeColor(a.employeeId, employees) }}
                       >
                         {employees.map((e) => (
                           <option key={e.id} value={e.id}>

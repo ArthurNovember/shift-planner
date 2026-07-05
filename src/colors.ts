@@ -1,4 +1,6 @@
-const PALETTE = [
+import type { Employee } from "./types";
+
+export const PALETTE = [
   "#2563eb",
   "#c616ea",
   "#61bb3a",
@@ -7,11 +9,8 @@ const PALETTE = [
   "#0891b2",
 ];
 
-export function employeeColor(
-  employeeId: string,
-  employeeIds: string[],
-): string {
-  const idx = employeeIds.indexOf(employeeId);
+export function employeeColor(employeeId: string, employees: Employee[]): string {
+  const idx = employees.findIndex((e) => e.id === employeeId);
   if (idx === -1) return "#6b7280";
-  return PALETTE[idx % PALETTE.length];
+  return employees[idx].color ?? PALETTE[idx % PALETTE.length];
 }

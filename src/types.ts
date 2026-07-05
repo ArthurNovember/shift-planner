@@ -4,6 +4,8 @@ export interface Employee {
   id: string;
   name: string;
   type: EmployeeType;
+  /** Manually picked color override; falls back to the deterministic palette when unset. */
+  color?: string;
 }
 
 export type ShiftKind = 'morning' | 'afternoon' | 'weekend';

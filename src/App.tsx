@@ -160,7 +160,6 @@ function AppContent() {
     const todaySchedule = schedules[todayKey] ?? [];
     const todayISO = toISODate(now);
     const nowTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-    const employeeIds = employees.map((e) => e.id);
     const workingIds = new Set(
       todaySchedule
         .filter((a) => a.date === todayISO && a.shift.start <= nowTime && nowTime <= a.shift.end)
@@ -168,7 +167,7 @@ function AppContent() {
     );
     return employees
       .filter((e) => workingIds.has(e.id))
-      .map((e) => ({ id: e.id, color: employeeColor(e.id, employeeIds) }));
+      .map((e) => ({ id: e.id, color: employeeColor(e.id, employees) }));
   }, [schedules, employees]);
 
   const todayAssignments = useMemo(() => {
