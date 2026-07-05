@@ -263,7 +263,7 @@
 
 .app-layout {
   display: grid;
-  grid-template-columns: 320px 1fr 300px;
+  grid-template-columns: 320px 1fr 320px;
   gap: 20px;
   align-items: stretch;
   margin-bottom: 20px;
@@ -293,6 +293,17 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+.warnings-column .panel {
+  height: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 1200px) {
+  .warnings-column .panel {
+    height: auto;
+  }
 }
 
 .availability-panel {
@@ -569,6 +580,18 @@ select {
   color: var(--warning-text);
 }
 
+.warning-clickable {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-family: var(--sans);
+  transition: filter 0.15s ease;
+}
+
+.warning-clickable:hover {
+  filter: brightness(1.25);
+}
+
 /* Hours summary */
 .hours-table {
   width: 100%;
@@ -621,6 +644,9 @@ select {
   gap: 6px;
   background: var(--cell-bg);
   overflow: hidden;
+  transition:
+    box-shadow 0.4s ease,
+    border-color 0.4s ease;
 }
 
 .calendar-cell.empty {
@@ -631,6 +657,16 @@ select {
 .calendar-cell.weekend {
   background: rgba(23, 182, 245, 0.1);
   border-color: var(--accent-border);
+}
+
+.calendar-cell.today {
+  border-color: var(--gold);
+  border-width: 2px;
+}
+
+.calendar-cell.highlighted {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-bg);
 }
 
 .calendar-cell-date {

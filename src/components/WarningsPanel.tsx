@@ -2,6 +2,7 @@ import type { ScheduleWarning } from '../types';
 
 interface Props {
   warnings: ScheduleWarning[];
+  onWarningClick?: (date: string) => void;
 }
 
 const SEVERITY: Record<ScheduleWarning['type'], 'high' | 'medium'> = {
@@ -12,7 +13,7 @@ const SEVERITY: Record<ScheduleWarning['type'], 'high' | 'medium'> = {
   'weekend-uneven': 'medium',
 };
 
-export function WarningsPanel({ warnings }: Props) {
+export function WarningsPanel({ warnings, onWarningClick }: Props) {
   return (
     <section className="panel">
       <h2>Upozornění</h2>
@@ -20,11 +21,23 @@ export function WarningsPanel({ warnings }: Props) {
         <p className="muted">Žádná upozornění – rozvrh vypadá v pořádku.</p>
       ) : (
         <ul className="warnings-list">
-          {warnings.map((w, i) => (
-            <li key={i} className={`warning warning-${SEVERITY[w.type]}`}>
-              {w.message}
-            </li>
-          ))}
+          {warnings.map((w, i) =>
+            w.date ? (
+              <li key={i}>
+                <button
+                  type="button"
+                  className={`warning warning-${SEVERITY[w.type]} warning-clickable`}
+                  onClick={() => onWarningClick?.(w.date!)}
+                >
+                  {w.message}
+                </button>
+              </li>
+            ) : (
+              <li key={i} className={`warning warning-${SEVERITY[w.type]}`}>
+                {w.message}
+              </li>
+            ),
+          )}
         </ul>
       )}
     </section>

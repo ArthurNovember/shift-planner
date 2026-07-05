@@ -13,6 +13,7 @@ interface Props {
   onUpdateAssignmentTime: (index: number, field: 'start' | 'end', value: string) => void;
   onRemoveAssignment: (index: number) => void;
   onAddAssignment: (date: string, employeeId: string, shift: ShiftDefinition) => void;
+  highlightedDate?: string | null;
 }
 
 const WEEKDAY_LABELS = ['Po', 'Út', 'St', 'Čt', 'Pá', 'So', 'Ne'];
@@ -84,9 +85,11 @@ export function CalendarGrid({
   onUpdateAssignmentTime,
   onRemoveAssignment,
   onAddAssignment,
+  highlightedDate,
 }: Props) {
   const totalDays = daysInMonth(year, month);
   const firstDow = (new Date(year, month, 1).getDay() + 6) % 7; // Monday = 0
+  const todayIso = toISODate(new Date());
 
   const cells: (number | null)[] = [];
   for (let i = 0; i < firstDow; i++) cells.push(null);
@@ -113,8 +116,15 @@ export function CalendarGrid({
             .filter((x) => x.a.date === iso)
             .sort((x, y) => x.a.shift.start.localeCompare(y.a.shift.start));
 
+          const isToday = iso === todayIso;
+          const isHighlighted = iso === highlightedDate;
+
           return (
-            <div key={idx} className={`calendar-cell${isWeekend ? ' weekend' : ''}`}>
+            <div
+              key={idx}
+              id={`day-${iso}`}
+              className={`calendar-cell${isWeekend ? ' weekend' : ''}${isToday ? ' today' : ''}${isHighlighted ? ' highlighted' : ''}`}
+            >
               <div className="calendar-cell-date">
                 <span className="calendar-cell-weekday">{WEEKDAY_LABELS[(dow + 6) % 7]}</span>
                 {day}
@@ -157,7 +167,7 @@ export function CalendarGrid({
                       <select
                         value={a.employeeId}
                         onChange={(e) => onUpdateAssignmentEmployee(i, e.target.value)}
-                        style={{ color: employeeColor(a.employeeId, employees) }}
+                        style={{ background: `${employeeColor(a.employeeId, employees)}2a`, color: 'var(--text-h)' }}
                       >
                         {employees.map((e) => (
                           <option key={e.id} value={e.id}>

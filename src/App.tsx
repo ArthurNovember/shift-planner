@@ -76,6 +76,7 @@ function AppContent() {
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
   const [loaded, setLoaded] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  const [highlightedDate, setHighlightedDate] = useState<string | null>(null);
 
   // One-time load from the shared cloud storage on login. If the cloud is still empty but this
   // browser has real data from before the switch to cloud storage, offer to upload it instead of
@@ -304,6 +305,12 @@ function AppContent() {
     setAssignments(assignments.filter((_, i) => i !== index));
   }
 
+  function handleWarningClick(date: string) {
+    document.getElementById(`day-${date}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightedDate(date);
+    setTimeout(() => setHighlightedDate(null), 2000);
+  }
+
   function handleAddAssignment(
     date: string,
     employeeId: string,
@@ -419,7 +426,7 @@ function AppContent() {
         </main>
 
         <aside className="warnings-column">
-          <WarningsPanel warnings={warnings} />
+          <WarningsPanel warnings={warnings} onWarningClick={handleWarningClick} />
         </aside>
       </div>
 
@@ -449,6 +456,7 @@ function AppContent() {
           onUpdateAssignmentTime={handleUpdateAssignmentTime}
           onRemoveAssignment={handleRemoveAssignment}
           onAddAssignment={handleAddAssignment}
+          highlightedDate={highlightedDate}
         />
       )}
 
