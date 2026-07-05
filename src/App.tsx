@@ -18,7 +18,10 @@ import { employeeColor } from "./colors";
 import type { SchedulesMap, Theme } from "./storage";
 import {
   DEFAULT_EMPLOYEES,
+  hasCloudData,
+  hasLocalData,
   loadEmployees,
+  loadLocalSnapshot,
   loadSchedules,
   loadTheme,
   loadUnavailability,
@@ -28,6 +31,8 @@ import {
   saveTheme,
   saveUnavailability,
 } from "./storage";
+import { supabase } from "./supabaseClient";
+import { LoginGate } from "./components/LoginGate";
 import { EmployeeManager } from "./components/EmployeeManager";
 import { WarningsPanel } from "./components/WarningsPanel";
 import { HoursSummary } from "./components/HoursSummary";
@@ -59,29 +64,83 @@ function shiftForEmployee(
   return SHIFTS[employee.type][kind];
 }
 
-function App() {
+function AppContent() {
   const today = new Date();
-  const [employees, setEmployees] = useState<Employee[]>(
-    () => loadEmployees() ?? DEFAULT_EMPLOYEES,
-  );
+  const [employees, setEmployees] = useState<Employee[]>(DEFAULT_EMPLOYEES);
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
-  const [schedules, setSchedules] = useState<SchedulesMap>(() =>
-    loadSchedules(),
-  );
-  const [unavailability, setUnavailability] = useState<UnavailabilityMap>(() =>
-    loadUnavailability(),
-  );
+  const [schedules, setSchedules] = useState<SchedulesMap>({});
+  const [unavailability, setUnavailability] = useState<UnavailabilityMap>({});
   const [ptLongShortWeek, setPtLongShortWeek] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
+  const [loaded, setLoaded] = useState(false);
+  const [saveError, setSaveError] = useState(false);
 
-  useEffect(() => saveEmployees(employees), [employees]);
-  useEffect(() => saveSchedules(schedules), [schedules]);
+  // One-time load from the shared cloud storage on login. If the cloud is still empty but this
+  // browser has real data from before the switch to cloud storage, offer to upload it instead of
+  // silently starting from an empty state.
+  useEffect(() => {
+    let cancelled = false;
+    async function init() {
+      try {
+        const cloudHasData = await hasCloudData();
+        if (!cloudHasData && hasLocalData()) {
+          const snapshot = loadLocalSnapshot();
+          const confirmed = window.confirm(
+            "V tomto prohlížeči byla nalezena starší data rozvrhu. Nahrát je do cloudu, aby je viděli všichni?",
+          );
+          if (confirmed) {
+            await Promise.all([
+              saveEmployees(snapshot.employees),
+              saveSchedules(snapshot.schedules),
+              saveUnavailability(snapshot.unavailability),
+            ]);
+            if (cancelled) return;
+            setEmployees(snapshot.employees);
+            setSchedules(snapshot.schedules);
+            setUnavailability(snapshot.unavailability);
+            return;
+          }
+        }
+        const [emp, sched, unavail] = await Promise.all([loadEmployees(), loadSchedules(), loadUnavailability()]);
+        if (cancelled) return;
+        setEmployees(emp);
+        setSchedules(sched);
+        setUnavailability(unavail);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    }
+    init();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    saveEmployees(employees)
+      .then(() => setSaveError(false))
+      .catch(() => setSaveError(true));
+  }, [employees, loaded]);
+  useEffect(() => {
+    if (!loaded) return;
+    saveSchedules(schedules)
+      .then(() => setSaveError(false))
+      .catch(() => setSaveError(true));
+  }, [schedules, loaded]);
   useEffect(() => {
     saveTheme(theme);
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
-  useEffect(() => saveUnavailability(unavailability), [unavailability]);
+  useEffect(() => {
+    if (!loaded) return;
+    saveUnavailability(unavailability)
+      .then(() => setSaveError(false))
+      .catch(() => setSaveError(true));
+  }, [unavailability, loaded]);
 
   const key = monthKey(year, month);
   const assignments = useMemo(() => schedules[key] ?? [], [schedules, key]);
@@ -243,8 +302,21 @@ function App() {
     setYear(newYear);
   }
 
+  if (!loaded) {
+    return (
+      <div className="auth-screen">
+        <p className="muted">Načítání…</p>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
+      {saveError && (
+        <div className="save-error-banner">
+          Nepodařilo se uložit změny. Zkontrolujte připojení k internetu.
+        </div>
+      )}
       <header className="app-header">
         <div>
           <h1>
@@ -377,8 +449,23 @@ function App() {
             <span className="theme-toggle-thumb" />
           </span>
         </button>
+        <button
+          type="button"
+          className="secondary-btn"
+          onClick={() => supabase.auth.signOut()}
+        >
+          Odhlásit
+        </button>
       </footer>
     </div>
+  );
+}
+
+function App() {
+  return (
+    <LoginGate>
+      <AppContent />
+    </LoginGate>
   );
 }
 

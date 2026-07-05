@@ -8,6 +8,54 @@
   position: relative;
 }
 
+.auth-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.auth-form {
+  width: 100%;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: center;
+}
+
+.auth-form h1 {
+  font-family: var(--heading);
+  font-size: 26px;
+  font-weight: 800;
+  margin: 0;
+}
+
+.auth-input {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input-bg);
+  color: var(--text-h);
+  font-size: 14px;
+}
+
+.auth-error {
+  color: var(--danger-text);
+  font-size: 13px;
+  margin: 0;
+}
+
+.save-error-banner {
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid var(--danger-border);
+  color: var(--danger-text);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
 .app-header {
   display: flex;
   align-items: center;
