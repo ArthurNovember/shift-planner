@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   Assignment,
   AvailabilityKind,
@@ -77,6 +77,26 @@ function AppContent() {
   const [loaded, setLoaded] = useState(false);
   const [saveError, setSaveError] = useState(false);
   const [highlightedDate, setHighlightedDate] = useState<string | null>(null);
+  const [preGenerateSnapshot, setPreGenerateSnapshot] = useState<{ key: string; assignments: Assignment[] } | null>(
+    null,
+  );
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const [sidebarHeight, setSidebarHeight] = useState<number | undefined>(undefined);
+
+  // The sidebar (employees + hours-per-month) is the reference height on desktop: the space
+  // scene should end exactly where it does, and the warnings panel should be at least that tall
+  // too - but only as a floor, since a long warnings list shouldn't stretch the sidebar or space
+  // scene along with it. A plain CSS stretch can't express "match, but only one-way", so this
+  // measures the sidebar's actual rendered height and applies it directly.
+  useEffect(() => {
+    if (!sidebarRef.current) return;
+    const el = sidebarRef.current;
+    const observer = new ResizeObserver((entries) => {
+      setSidebarHeight(entries[0]?.contentRect.height);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [loaded]);
 
   // One-time load from the shared cloud storage on login. If the cloud is still empty but this
   // browser has real data from before the switch to cloud storage, offer to upload it instead of
@@ -194,6 +214,7 @@ function AppContent() {
     const previousMonth = month === 0 ? 11 : month - 1;
     const previousYear = month === 0 ? year - 1 : year;
     const previousAssignments = schedules[monthKey(previousYear, previousMonth)] ?? [];
+    setPreGenerateSnapshot(assignments.length > 0 ? { key, assignments } : null);
     setAssignments(
       generateSchedule(
         year,
@@ -204,6 +225,12 @@ function AppContent() {
         previousAssignments,
       ),
     );
+  }
+
+  function handleRevertGenerate() {
+    if (!preGenerateSnapshot || preGenerateSnapshot.key !== key) return;
+    setAssignments(preGenerateSnapshot.assignments);
+    setPreGenerateSnapshot(null);
   }
 
   function handleExportPdf() {
@@ -409,7 +436,7 @@ function AppContent() {
       </header>
 
       <div className="app-layout">
-        <aside className="sidebar">
+        <aside className="sidebar" ref={sidebarRef}>
           <EmployeeManager employees={employees} onChange={setEmployees} />
           <HoursSummary
             employees={employees}
@@ -417,7 +444,7 @@ function AppContent() {
           />
         </aside>
 
-        <main className="main-content">
+        <main className="main-content" style={sidebarHeight ? { height: sidebarHeight } : undefined}>
           <SpaceScene
             workingEmployees={workingEmployees}
             employees={employees}
@@ -426,7 +453,7 @@ function AppContent() {
         </main>
 
         <aside className="warnings-column">
-          <WarningsPanel warnings={warnings} onWarningClick={handleWarningClick} />
+          <WarningsPanel warnings={warnings} onWarningClick={handleWarningClick} minHeight={sidebarHeight} />
         </aside>
       </div>
 
@@ -461,6 +488,15 @@ function AppContent() {
       )}
 
       <div className="export-bar">
+        {preGenerateSnapshot?.key === key && (
+          <button
+            type="button"
+            className="secondary-btn revert-generate-btn"
+            onClick={handleRevertGenerate}
+          >
+            Vrátit předchozí rozvrh
+          </button>
+        )}
         <button
           type="button"
           className="secondary-btn"

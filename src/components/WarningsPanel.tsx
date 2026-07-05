@@ -3,6 +3,7 @@ import type { ScheduleWarning } from '../types';
 interface Props {
   warnings: ScheduleWarning[];
   onWarningClick?: (date: string) => void;
+  minHeight?: number;
 }
 
 const SEVERITY: Record<ScheduleWarning['type'], 'high' | 'medium'> = {
@@ -13,9 +14,9 @@ const SEVERITY: Record<ScheduleWarning['type'], 'high' | 'medium'> = {
   'weekend-uneven': 'medium',
 };
 
-export function WarningsPanel({ warnings, onWarningClick }: Props) {
+export function WarningsPanel({ warnings, onWarningClick, minHeight }: Props) {
   return (
-    <section className="panel">
+    <section className="panel" style={minHeight ? { minHeight } : undefined}>
       <h2>Upozornění</h2>
       {warnings.length === 0 ? (
         <p className="muted">Žádná upozornění – rozvrh vypadá v pořádku.</p>

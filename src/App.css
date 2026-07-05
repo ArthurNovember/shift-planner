@@ -220,6 +220,10 @@
   margin-top: 20px;
 }
 
+.revert-generate-btn {
+  margin-right: auto;
+}
+
 .theme-toggle-label {
   font-size: 13px;
   color: var(--text);
@@ -265,7 +269,7 @@
   display: grid;
   grid-template-columns: 320px 1fr 320px;
   gap: 20px;
-  align-items: stretch;
+  align-items: start;
   margin-bottom: 20px;
 }
 
@@ -296,13 +300,16 @@
 }
 
 .warnings-column .panel {
-  height: 100%;
   box-sizing: border-box;
 }
 
 @media (max-width: 1200px) {
   .warnings-column .panel {
-    height: auto;
+    min-height: auto !important;
+  }
+
+  .main-content {
+    height: auto !important;
   }
 }
 
@@ -935,7 +942,6 @@ select {
 
 .today-shift-time {
   color: var(--text);
-  margin-left: auto;
   font-variant-numeric: tabular-nums;
 }
 

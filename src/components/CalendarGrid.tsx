@@ -167,7 +167,6 @@ export function CalendarGrid({
                       <select
                         value={a.employeeId}
                         onChange={(e) => onUpdateAssignmentEmployee(i, e.target.value)}
-                        style={{ background: `${employeeColor(a.employeeId, employees)}2a`, color: 'var(--text-h)' }}
                       >
                         {employees.map((e) => (
                           <option key={e.id} value={e.id}>
