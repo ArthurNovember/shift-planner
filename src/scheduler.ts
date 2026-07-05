@@ -4,7 +4,6 @@ import {
   FT_TOGETHER_CHANCE,
   FULLTIME_HOURS_TOLERANCE,
   FULLTIME_TARGET_HOURS,
-  PARTTIME_LONG_SHIFTS,
   PARTTIME_MONTHLY_CAP,
   SHIFTS,
   WEEKEND_SHIFT,
@@ -635,8 +634,9 @@ export function generateSchedule(
   }
 
   // "Long/short week" catch-up: each part-timer's own already-scheduled weekday days get
-  // upgraded in place from the standard 4h shift to the 8h PARTTIME_LONG_SHIFTS version (instead
-  // of adding new days) until they approach their own cap - independently of one another, not
+  // upgraded in place from the standard 4h shift to the 8h SHIFTS.fulltime version (same shift
+  // fulltime uses, break included, since it's the same >6h shift no matter who works it) instead
+  // of adding new days, until they approach their own cap - independently of one another, not
   // relative to whichever partner happens to be ahead. The alternating heavy/light roles already
   // give the two part-timers the same number of days in a typical month, so this equalizes them
   // as a side effect; but it must target each person's own cap directly, since two people with
@@ -659,7 +659,7 @@ export function generateSchedule(
         if ((ptHours.get(emp.id) ?? 0) >= target) break;
         const current = assignments[idx];
         const kind = current.shift.kind as 'morning' | 'afternoon';
-        const longShift = PARTTIME_LONG_SHIFTS[kind];
+        const longShift = SHIFTS.fulltime[kind];
         if (current.shift.hours >= longShift.hours) continue; // already the long version
         const added = longShift.hours - current.shift.hours;
         if ((ptHours.get(emp.id) ?? 0) + added > effectivePtCap(emp.id)) continue;

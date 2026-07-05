@@ -14,7 +14,14 @@ export interface ShiftDefinition {
   kind: ShiftKind;
   start: string;
   end: string;
+  /** Hours counted toward totals/limits - the time span minus any lunch break (see
+   * breakMinutes), not the raw clock duration. */
   hours: number;
+  /** Minutes deducted from the clock span to get `hours` - legally applies whenever a shift
+   * exceeds 6h, regardless of employment type. 0/undefined means no break is currently applied
+   * (either the shift is 6h or under, or it's over 6h but the break was manually removed/never
+   * added - see the "+ oběd"/"− oběd" toggle in CalendarGrid). */
+  breakMinutes?: number;
 }
 
 export interface Assignment {
@@ -43,10 +50,12 @@ export interface MonthSchedule {
   assignments: Assignment[];
 }
 
+// Fulltime shifts are 8.5h clock spans, but 30 minutes of that is the legally required lunch
+// break for any shift over 6h - it doesn't count as worked time, so `hours` is 8, not 8.5.
 export const SHIFTS: Record<'fulltime' | 'parttime', { morning: ShiftDefinition; afternoon: ShiftDefinition }> = {
   fulltime: {
-    morning: { kind: 'morning', start: '08:00', end: '16:30', hours: 8.5 },
-    afternoon: { kind: 'afternoon', start: '11:30', end: '20:00', hours: 8.5 },
+    morning: { kind: 'morning', start: '08:00', end: '16:30', hours: 8, breakMinutes: 30 },
+    afternoon: { kind: 'afternoon', start: '11:30', end: '20:00', hours: 8, breakMinutes: 30 },
   },
   parttime: {
     morning: { kind: 'morning', start: '09:00', end: '13:00', hours: 4 },
@@ -54,16 +63,9 @@ export const SHIFTS: Record<'fulltime' | 'parttime', { morning: ShiftDefinition;
   },
 };
 
-export const WEEKEND_SHIFT: ShiftDefinition = { kind: 'weekend', start: '10:15', end: '19:45', hours: 9.5 };
-
-/** Part-time "catch-up" full-day shifts, used only in "long/short week" mode to even out hours
- * between part-timers: an already-scheduled 4h day gets upgraded to one of these instead of a
- * new day being added. 8h flat (not fulltime's 8.5h) since these don't include fulltime's paid
- * 30-minute lunch break. */
-export const PARTTIME_LONG_SHIFTS: Record<'morning' | 'afternoon', ShiftDefinition> = {
-  morning: { kind: 'morning', start: '08:00', end: '16:00', hours: 8 },
-  afternoon: { kind: 'afternoon', start: '12:00', end: '20:00', hours: 8 },
-};
+// The weekend shift is a 9.5h span for whoever covers it, full or part time - also over 6h, so
+// the same break applies.
+export const WEEKEND_SHIFT: ShiftDefinition = { kind: 'weekend', start: '10:15', end: '19:45', hours: 9, breakMinutes: 30 };
 
 /** Target and soft cap for part-time monthly hours: the generator fills shifts up to this total. */
 export const PARTTIME_MONTHLY_CAP = 80;
@@ -101,6 +103,6 @@ export interface ScheduleOptions {
   /** "Long/short week": each week, one part-timer gets a "heavy" role (available Mon/Tue/Fri)
    * and the other a "light" role (available only Wed/Thu), swapping every week for fairness. Since
    * that alone doesn't guarantee equal monthly hours between them, whoever ends up behind has some
-   * of their own already-scheduled 4h days upgraded to an 8h PARTTIME_LONG_SHIFTS day to catch up. */
+   * of their own already-scheduled 4h days upgraded to an 8h SHIFTS.fulltime day to catch up. */
   ptLongShortWeek?: boolean;
 }

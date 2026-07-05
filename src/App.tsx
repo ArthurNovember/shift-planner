@@ -320,9 +320,27 @@ function AppContent() {
       if (i !== index) return a;
       const start = field === "start" ? value : a.shift.start;
       const end = field === "end" ? value : a.shift.end;
+      const duration = hoursBetween(start, end);
+      // A shift 6h or under never has a lunch break - shortening one below that threshold drops
+      // it automatically, since it's no longer legally required. Growing it back past 6h doesn't
+      // re-add a break on its own; that's the "+ oběd" toggle's job (see handleToggleBreak).
+      const breakMinutes = duration > 6 ? (a.shift.breakMinutes ?? 0) : 0;
       return {
         ...a,
-        shift: { ...a.shift, start, end, hours: hoursBetween(start, end) },
+        shift: { ...a.shift, start, end, breakMinutes, hours: duration - breakMinutes / 60 },
+      };
+    });
+    setAssignments(next);
+  }
+
+  function handleToggleBreak(index: number) {
+    const next = assignments.map((a, i) => {
+      if (i !== index) return a;
+      const duration = hoursBetween(a.shift.start, a.shift.end);
+      const breakMinutes = (a.shift.breakMinutes ?? 0) > 0 ? 0 : 30;
+      return {
+        ...a,
+        shift: { ...a.shift, breakMinutes, hours: duration - breakMinutes / 60 },
       };
     });
     setAssignments(next);
@@ -481,6 +499,7 @@ function AppContent() {
           onUpdateAssignmentEmployee={handleUpdateAssignmentEmployee}
           onUpdateAssignmentKind={handleUpdateAssignmentKind}
           onUpdateAssignmentTime={handleUpdateAssignmentTime}
+          onToggleBreak={handleToggleBreak}
           onRemoveAssignment={handleRemoveAssignment}
           onAddAssignment={handleAddAssignment}
           highlightedDate={highlightedDate}

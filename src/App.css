@@ -748,6 +748,40 @@ select {
   margin-left: auto;
 }
 
+.break-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 10px;
+  color: var(--text);
+  cursor: pointer;
+  align-self: flex-start;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.break-toggle input[type="checkbox"] {
+  width: 11px;
+  height: 11px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+.break-toggle.checked {
+  color: var(--text-h);
+}
+
+.break-toggle:hover {
+  border-color: var(--accent-border);
+}
+
 .shift-employee-row {
   display: flex;
   align-items: center;
@@ -1100,6 +1134,11 @@ select {
   .shift-kind-label,
   .shift-kind-select {
     font-size: 13px;
+  }
+
+  .break-toggle {
+    font-size: 12px;
+    padding: 3px 7px;
   }
 
   .shift-time-input {

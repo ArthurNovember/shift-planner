@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Assignment, Employee, ShiftDefinition } from '../types';
-import { daysInMonth, shiftOptionsFor, toISODate } from '../scheduler';
+import { daysInMonth, hoursBetween, shiftOptionsFor, toISODate } from '../scheduler';
 import { employeeColor } from '../colors';
 
 interface Props {
@@ -11,6 +11,7 @@ interface Props {
   onUpdateAssignmentEmployee: (index: number, newEmployeeId: string) => void;
   onUpdateAssignmentKind: (index: number, kind: 'morning' | 'afternoon') => void;
   onUpdateAssignmentTime: (index: number, field: 'start' | 'end', value: string) => void;
+  onToggleBreak: (index: number) => void;
   onRemoveAssignment: (index: number) => void;
   onAddAssignment: (date: string, employeeId: string, shift: ShiftDefinition) => void;
   highlightedDate?: string | null;
@@ -83,6 +84,7 @@ export function CalendarGrid({
   onUpdateAssignmentEmployee,
   onUpdateAssignmentKind,
   onUpdateAssignmentTime,
+  onToggleBreak,
   onRemoveAssignment,
   onAddAssignment,
   highlightedDate,
@@ -130,7 +132,11 @@ export function CalendarGrid({
                 {day}
               </div>
               <div className="calendar-cell-shifts">
-                {dayItems.map(({ a, i }) => (
+                {dayItems.map(({ a, i }) => {
+                  const duration = hoursBetween(a.shift.start, a.shift.end);
+                  const eligibleForBreak = duration > 6;
+                  const hasBreak = (a.shift.breakMinutes ?? 0) > 0;
+                  return (
                   <div key={i} className="shift-block" style={{ borderColor: employeeColor(a.employeeId, employees) }}>
                     <div className="shift-time-row">
                       {a.shift.kind === 'weekend' ? (
@@ -163,6 +169,19 @@ export function CalendarGrid({
                       />
                       <span className="shift-hours-label">{a.shift.hours.toFixed(1)} h</span>
                     </div>
+                    {eligibleForBreak && (
+                      <label
+                        className={`break-toggle${hasBreak ? ' checked' : ''}`}
+                        title={
+                          hasBreak
+                            ? 'Směna delší než 6 h má 30min pauzu na oběd, která se nepočítá do odpracovaných hodin - odškrtnutím ji odeberete.'
+                            : 'Směna delší než 6 h má nárok na 30min pauzu na oběd, která se nepočítá do odpracovaných hodin - zaškrtnutím ji přidáte.'
+                        }
+                      >
+                        <input type="checkbox" checked={hasBreak} onChange={() => onToggleBreak(i)} />
+                        Oběd (30 min)
+                      </label>
+                    )}
                     <div className="shift-employee-row">
                       <select
                         value={a.employeeId}
@@ -184,7 +203,8 @@ export function CalendarGrid({
                       </button>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
               {employees.length > 0 && (
                 <AddShiftRow
