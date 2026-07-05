@@ -4,9 +4,8 @@ import {
   FT_TOGETHER_CHANCE,
   FULLTIME_HOURS_TOLERANCE,
   FULLTIME_TARGET_HOURS,
+  PARTTIME_LONG_SHIFTS,
   PARTTIME_MONTHLY_CAP,
-  PT_REGULAR_LONG_WEEK_SHIFTS,
-  PT_SHORT_WEEK_REDUCTION,
   SHIFTS,
   WEEKEND_SHIFT,
 } from './types';
@@ -70,6 +69,39 @@ export function generateSchedule(
     return !!marks && marks.has('morning') && marks.has('afternoon');
   }
 
+  const ptLongShortWeek = options.ptLongShortWeek ?? false;
+
+  // --- Group this month's weekdays by the Monday that starts their calendar week - computed up
+  //     front (rather than after weekend assignment) because "long/short week" mode needs each
+  //     part-timer's weekly heavy/light role before weekends are even assigned; see below. ---
+  const weekdaysByWeekKey = new Map<string, Date[]>();
+  for (let day = 1; day <= totalDays; day++) {
+    const d = new Date(year, month, day);
+    const dow = d.getDay();
+    if (dow === 0 || dow === 6) continue;
+    const weekKey = toISODate(mondayOf(d));
+    if (!weekdaysByWeekKey.has(weekKey)) weekdaysByWeekKey.set(weekKey, []);
+    weekdaysByWeekKey.get(weekKey)!.push(d);
+  }
+  const orderedWeekKeys = [...weekdaysByWeekKey.keys()].sort();
+
+  const PT_HEAVY_WEEKDAYS = new Set([0, 1, 4]); // Po, Út, Pá (Monday = 0)
+  const PT_LIGHT_WEEKDAYS = new Set([2, 3]); // St, Čt
+
+  // Each week, one part-timer is "heavy" (available Mon/Tue/Fri) and the other "light"
+  // (available only Wed/Thu), swapping every week - see the pattern-filling block near the
+  // bottom for the full rationale. Returns null when the week isn't one of this month's own
+  // (a weekend pair can belong to a Monday-Friday week that falls entirely in the previous/next
+  // month), since there's no role to speak of for a week outside this month's structure.
+  function ptRoleIsLight(empId: string, weekKey: string): boolean | null {
+    const weekIndex = orderedWeekKeys.indexOf(weekKey);
+    if (weekIndex === -1) return null;
+    const empIndex = parttime.findIndex((e) => e.id === empId);
+    if (empIndex === -1) return null;
+    const isHeavy = (weekIndex + empIndex + monthIndex) % 2 === 0;
+    return !isHeavy;
+  }
+
   // --- Weekends: one employee covers both Saturday and Sunday with the weekend shift ---
   const weekendPairs: { saturday: Date; sunday: Date }[] = [];
   for (let day = 1; day <= totalDays; day++) {
@@ -106,8 +138,23 @@ export function generateSchedule(
       return Array.from({ length: n }, (_, k) => (start + k) % n);
     });
 
-    const availableFor = (pairIdx: number, empIdx: number): boolean =>
+    const availableIgnoringRole = (pairIdx: number, empIdx: number): boolean =>
       !isUnavailable(employees[empIdx].id, satIsos[pairIdx]) && !isUnavailable(employees[empIdx].id, sunIsos[pairIdx]);
+
+    // In "long/short week" mode, a part-timer can only take a weekend during their own *light*
+    // week (Wed/Thu only) - their heavy weeks (Mon/Tue/Fri) stay predictable and never also carry
+    // a weekend. Fulltime is unaffected. A weekend pair's own Mon-Fri week can fall in the
+    // previous/next month (ptRoleIsLight returns null then), in which case there's no role to
+    // enforce either way.
+    const availableFor = (pairIdx: number, empIdx: number): boolean => {
+      if (!availableIgnoringRole(pairIdx, empIdx)) return false;
+      const emp = employees[empIdx];
+      if (ptLongShortWeek && emp.type === 'parttime') {
+        const weekKey = toISODate(mondayOf(weekendPairs[pairIdx].saturday));
+        if (ptRoleIsLight(emp.id, weekKey) === false) return false;
+      }
+      return true;
+    };
 
     const matchEmployeeOfPair = new Array<number>(m).fill(-1);
     const matchPairOfEmployee = new Array<number>(n).fill(-1);
@@ -160,7 +207,22 @@ export function generateSchedule(
         }
       }
       if (!best) {
+        // Nobody satisfies both real availability and the light-role constraint - covering the
+        // weekend at all matters more than that pattern, so this tier still respects actual
+        // unavailability but relaxes the role requirement.
+        bestCredits = Infinity;
+        for (const empIdx of candidateOrder[pairIdx]) {
+          if (!availableIgnoringRole(pairIdx, empIdx)) continue;
+          const credits = weekendCredits.get(employees[empIdx].id)!;
+          if (credits < bestCredits) {
+            bestCredits = credits;
+            best = employees[empIdx];
+          }
+        }
+      }
+      if (!best) {
         // Literally nobody is free either day: cover it anyway as an absolute last resort.
+        bestCredits = Infinity;
         for (const empIdx of candidateOrder[pairIdx]) {
           const credits = weekendCredits.get(employees[empIdx].id)!;
           if (credits < bestCredits) {
@@ -172,18 +234,6 @@ export function generateSchedule(
       if (best) assignPair(pairIdx, best);
     }
   }
-
-  // --- Group this month's weekdays by the Monday that starts their calendar week ---
-  const weekdaysByWeekKey = new Map<string, Date[]>();
-  for (let day = 1; day <= totalDays; day++) {
-    const d = new Date(year, month, day);
-    const dow = d.getDay();
-    if (dow === 0 || dow === 6) continue;
-    const weekKey = toISODate(mondayOf(d));
-    if (!weekdaysByWeekKey.has(weekKey)) weekdaysByWeekKey.set(weekKey, []);
-    weekdaysByWeekKey.get(weekKey)!.push(d);
-  }
-  const orderedWeekKeys = [...weekdaysByWeekKey.keys()].sort();
 
   function isShortWeek(employeeId: string, weekKey: string): boolean {
     return weekendEmployeeByWeekKey.get(weekKey)?.has(employeeId) ?? false;
@@ -210,17 +260,28 @@ export function generateSchedule(
     weekendHoursByEmployee.set(a.employeeId, (weekendHoursByEmployee.get(a.employeeId) ?? 0) + a.shift.hours);
   });
 
-  const ftWeekTargets = new Map<string, Map<string, number>>(); // employeeId -> weekKey -> target days
-  fulltime.forEach((emp) => {
-    const weekendHours = weekendHoursByEmployee.get(emp.id) ?? 0;
-    const idealTotalDays = Math.max(0, FULLTIME_TARGET_HOURS - weekendHours) / SHIFTS.fulltime.morning.hours;
+  // Fulltime: given a monthly hour target, subtracts whatever weekend hours this employee
+  // actually has this month, rounds the remaining day count ONCE (not per week, which would
+  // multiply rounding error across weeks), then hands it out to weeks one day at a time - always
+  // to whichever week currently has the fewest days assigned, within its real capacity - so
+  // short/fringe weeks with fewer actual weekdays get their real capacity respected instead of
+  // silently losing the shortfall. A week where they cover the weekend has its capacity reduced
+  // by `shortWeekReduction`, to rest around that extra load.
+  function computeWeekDayTargets(
+    empId: string,
+    targetHours: number,
+    shiftHours: number,
+    shortWeekReduction: number,
+  ): Map<string, number> {
+    const weekendHours = weekendHoursByEmployee.get(empId) ?? 0;
+    const idealTotalDays = Math.max(0, targetHours - weekendHours) / shiftHours;
     const totalTargetDays = Math.round(idealTotalDays);
 
     const capacity = new Map<string, number>();
     orderedWeekKeys.forEach((wk) => {
-      const availableCount = weekdaysByWeekKey.get(wk)!.filter((d) => !isUnavailable(emp.id, toISODate(d))).length;
+      const availableCount = weekdaysByWeekKey.get(wk)!.filter((d) => !isUnavailable(empId, toISODate(d))).length;
       const cap = Math.min(5, availableCount);
-      capacity.set(wk, isShortWeek(emp.id, wk) ? Math.max(0, cap - FT_SHORT_WEEK_REDUCTION) : cap);
+      capacity.set(wk, isShortWeek(empId, wk) ? Math.max(0, cap - shortWeekReduction) : cap);
     });
 
     const totalCapacity = [...capacity.values()].reduce((a, b) => a + b, 0);
@@ -242,7 +303,12 @@ export function generateSchedule(
       weekTargets.set(bestWeek, weekTargets.get(bestWeek)! + 1);
       remaining--;
     }
-    ftWeekTargets.set(emp.id, weekTargets);
+    return weekTargets;
+  }
+
+  const ftWeekTargets = new Map<string, Map<string, number>>(); // employeeId -> weekKey -> target days
+  fulltime.forEach((emp) => {
+    ftWeekTargets.set(emp.id, computeWeekDayTargets(emp.id, FULLTIME_TARGET_HOURS, SHIFTS.fulltime.morning.hours, FT_SHORT_WEEK_REDUCTION));
   });
 
   // One FT always trims days off from the Friday side, the other from the Monday side, so
@@ -416,55 +482,27 @@ export function generateSchedule(
     return true;
   }
 
-  // --- Regularity mode: give each part-timer a fixed recurring weekly morning pattern instead
-  //     of the greedy fill below, so their shifts land on the same weekdays every week. The
-  //     two patterns never overlap the same date - whoever isn't scheduled that day is always
-  //     free to step in if a fulltime gap lands on it, without doubling anyone up. Since two
-  //     equal quotas can't both fit a 5-day week without overlap, priority alternates monthly
-  //     so it averages out fair over time. Deliberately a light, fixed quota (not a hunt for
-  //     80h) - reaching the cap on morning-only shifts would mean working nearly every
-  //     weekday, which defeats the point of a genuinely regular, lighter rhythm. ---
-  if (parttime.length > 0 && options.ptRegularityMode) {
-    const ptDayTargets = new Map<string, { longShifts: number; shortShifts: number }>();
-    parttime.forEach((emp) => {
-      const longShifts = PT_REGULAR_LONG_WEEK_SHIFTS;
-      const shortShifts = Math.max(0, longShifts - PT_SHORT_WEEK_REDUCTION);
-      ptDayTargets.set(emp.id, { longShifts, shortShifts });
-    });
-
-    const priorityIndex = monthIndex % parttime.length;
-    const claimOrder = parttime
-      .map((_, i) => i)
-      .sort((a, b) => (a - priorityIndex + parttime.length) % parttime.length - ((b - priorityIndex + parttime.length) % parttime.length));
-
+  // --- "Long/short week": each week, one part-timer gets the "heavy" role (available Mon, Tue,
+  //     Fri) and the other gets the "light" role (available only Wed, Thu); next week the two
+  //     swap, so it's fair over time instead of one person permanently having the lighter week.
+  //     A weekend only ever lands on someone's *light* week (see the weekend-assignment block
+  //     above), so that a person's heavy weeks stay predictable Mon/Tue/Fri and their light weeks
+  //     are the only ones that can also carry the weekend - never both a heavy weekday load and a
+  //     weekend the same week. Whether someone actually works one of their role's available days
+  //     still depends on their running hour total - once they're at the ~80h cap, further
+  //     available days are simply left off instead of forced. ---
+  if (parttime.length > 0 && ptLongShortWeek) {
     orderedWeekKeys.forEach((weekKey) => {
       const weekdays = weekdaysByWeekKey.get(weekKey)!;
-      const claimedThisWeek = new Set<string>();
-
-      claimOrder.forEach((empIndex) => {
-        const emp = parttime[empIndex];
-        const available = weekdays.filter(
-          (d) => !isUnavailableForKind(emp.id, toISODate(d), 'morning') && !claimedThisWeek.has(toISODate(d)),
-        );
-        const { longShifts, shortShifts } = ptDayTargets.get(emp.id)!;
-        let kept: Date[];
-        if (isShortWeek(emp.id, weekKey)) {
-          // Their own weekend week: rest around it by keeping the middle days only.
-          const target = Math.min(available.length, shortShifts);
-          const offCount = Math.max(0, available.length - target);
-          kept = [...available];
-          for (let i = 0; i < offCount; i++) {
-            if (i % 2 === 0) kept.pop();
-            else kept.shift();
-          }
-        } else {
-          // Regular week: this person anchors to the same side of the week every time.
-          const target = Math.min(available.length, longShifts);
-          kept = empIndex % 2 === 0 ? available.slice(0, target) : available.slice(available.length - target);
-        }
-        kept.forEach((d) => {
+      parttime.forEach((emp) => {
+        const isLight = ptRoleIsLight(emp.id, weekKey);
+        const allowedWeekdays = isLight ? PT_LIGHT_WEEKDAYS : PT_HEAVY_WEEKDAYS;
+        weekdays.forEach((d) => {
+          const dow = (d.getDay() + 6) % 7; // Monday = 0
+          if (!allowedWeekdays.has(dow)) return;
           const iso = toISODate(d);
-          claimedThisWeek.add(iso);
+          if (isUnavailableForKind(emp.id, iso, 'morning')) return;
+          if ((ptHours.get(emp.id) ?? 0) + SHIFTS.parttime.morning.hours > PARTTIME_MONTHLY_CAP) return;
           assignments.push({ date: iso, employeeId: emp.id, shift: SHIFTS.parttime.morning });
           ptTakenSlots.add(`${iso}-morning`);
           ptHours.set(emp.id, (ptHours.get(emp.id) ?? 0) + SHIFTS.parttime.morning.hours);
@@ -475,8 +513,8 @@ export function generateSchedule(
   }
 
   if (parttime.length > 0) {
-    // Fulltime gaps (their short week, or both off) come first - this is the coverage that
-    // actually needs filling, so it takes priority over topping up anyone's hours.
+    // Fulltime gaps (their short week, or both off) come first among what's left - this is
+    // coverage that actually needs filling, so it takes priority over topping up anyone's hours.
     gaps.forEach((gap) => {
       let ok = assignPtSlot(gap.date, gap.kind, true, false);
       if (!ok) ok = assignPtSlot(gap.date, gap.kind, false, false);
@@ -487,12 +525,12 @@ export function generateSchedule(
   // Top up each part-timer's hours toward the ~80h cap, same idea as fulltime working backward
   // from its own target: gaps alone rarely add up to that much, so once they're covered, each
   // part-timer picks up extra morning support shifts (fulltime is typically already there - that
-  // overlap is fine, same as it is for gap coverage) on any day they aren't already working,
-  // until they'd cross the cap. This can land both part-timers on the same morning together;
-  // that's intentional; there just aren't enough weekdays in a month to keep every support shift
-  // exclusive to one person and still get both close to their target. Regularity mode opts out -
-  // it deliberately keeps a light, fixed quota instead of hunting for the cap.
-  if (parttime.length > 0 && !options.ptRegularityMode) {
+  // overlap is fine, same as it is for gap coverage) on any day they aren't already working, until
+  // they'd cross the cap. This can land both part-timers on the same morning together; that's
+  // intentional; there just aren't enough weekdays in a month to keep every support shift
+  // exclusive to one person and still get both close to their target. "Long/short week" opts out -
+  // it already worked backward from the cap on its own terms, week by week.
+  if (parttime.length > 0 && !ptLongShortWeek) {
     const allWeekdays: Date[] = [];
     orderedWeekKeys.forEach((wk) => allWeekdays.push(...weekdaysByWeekKey.get(wk)!));
     const shiftHours = SHIFTS.parttime.morning.hours;
@@ -505,6 +543,39 @@ export function generateSchedule(
         assignments.push({ date: iso, employeeId: emp.id, shift: SHIFTS.parttime.morning });
         ptHours.set(emp.id, (ptHours.get(emp.id) ?? 0) + shiftHours);
         ptDatesWorked.get(emp.id)!.add(iso);
+      }
+    });
+  }
+
+  // "Long/short week" catch-up: alternating heavy/light weekly roles keeps things fair week by
+  // week, but doesn't guarantee equal monthly hours between part-timers - whoever ends up behind
+  // the team's highest earner (capped at ~80h) has some of their own already-scheduled weekday
+  // days upgraded in place from the standard 4h shift to the 8h PARTTIME_LONG_SHIFTS version,
+  // instead of adding new days, until they've caught up. Earliest days first, for consistency.
+  if (parttime.length > 0 && ptLongShortWeek) {
+    const maxHours = Math.max(...parttime.map((e) => ptHours.get(e.id) ?? 0));
+    const target = Math.min(PARTTIME_MONTHLY_CAP, maxHours);
+
+    parttime.forEach((emp) => {
+      if ((ptHours.get(emp.id) ?? 0) >= target) return;
+      const ownShiftIndexes = assignments
+        .map((_, idx) => idx)
+        .filter((idx) => {
+          const a = assignments[idx];
+          return a.employeeId === emp.id && (a.shift.kind === 'morning' || a.shift.kind === 'afternoon');
+        })
+        .sort((i1, i2) => assignments[i1].date.localeCompare(assignments[i2].date));
+
+      for (const idx of ownShiftIndexes) {
+        if ((ptHours.get(emp.id) ?? 0) >= target) break;
+        const current = assignments[idx];
+        const kind = current.shift.kind as 'morning' | 'afternoon';
+        const longShift = PARTTIME_LONG_SHIFTS[kind];
+        if (current.shift.hours >= longShift.hours) continue; // already the long version
+        const added = longShift.hours - current.shift.hours;
+        if ((ptHours.get(emp.id) ?? 0) + added > PARTTIME_MONTHLY_CAP) continue;
+        assignments[idx] = { ...current, shift: longShift };
+        ptHours.set(emp.id, (ptHours.get(emp.id) ?? 0) + added);
       }
     });
   }

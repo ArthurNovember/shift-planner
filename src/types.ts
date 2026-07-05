@@ -54,6 +54,15 @@ export const SHIFTS: Record<'fulltime' | 'parttime', { morning: ShiftDefinition;
 
 export const WEEKEND_SHIFT: ShiftDefinition = { kind: 'weekend', start: '10:15', end: '19:45', hours: 9.5 };
 
+/** Part-time "catch-up" full-day shifts, used only in "long/short week" mode to even out hours
+ * between part-timers: an already-scheduled 4h day gets upgraded to one of these instead of a
+ * new day being added. 8h flat (not fulltime's 8.5h) since these don't include fulltime's paid
+ * 30-minute lunch break. */
+export const PARTTIME_LONG_SHIFTS: Record<'morning' | 'afternoon', ShiftDefinition> = {
+  morning: { kind: 'morning', start: '08:00', end: '16:00', hours: 8 },
+  afternoon: { kind: 'afternoon', start: '12:00', end: '20:00', hours: 8 },
+};
+
 /** Target and soft cap for part-time monthly hours: the generator fills shifts up to this total. */
 export const PARTTIME_MONTHLY_CAP = 80;
 
@@ -77,14 +86,6 @@ export const FT_SHORT_WEEK_REDUCTION = 2;
  * gap for part-time to cover, same as any other short-week gap. */
 export const FT_TOGETHER_CHANCE = 0.1;
 
-/** In part-time "regularity mode", how many fixed morning shifts a normal week gets. Kept
- * deliberately light (not hunting for the 80h cap) so the pattern stays genuinely regular. */
-export const PT_REGULAR_LONG_WEEK_SHIFTS = 3;
-
-/** In part-time "regularity mode", a week where the employee covers the weekend gets this
- * many fewer morning shifts, so they rest around it like fulltime does. */
-export const PT_SHORT_WEEK_REDUCTION = 2;
-
 /** Which weekday shift kind(s) an employee is marked unavailable for on a given date. Weekends
  * have no morning/afternoon split (one shift covers the whole day), so a weekend day off is
  * represented the same way as a full weekday off: both kinds marked. */
@@ -94,7 +95,9 @@ export type AvailabilityKind = 'morning' | 'afternoon';
 export type UnavailabilityMap = Record<string, Record<string, Set<AvailabilityKind>>>;
 
 export interface ScheduleOptions {
-  /** Give each part-timer a fixed recurring weekly morning pattern instead of the default
-   * greedy hour-filling, so their shifts land on the same weekdays every week. */
-  ptRegularityMode?: boolean;
+  /** "Long/short week": each week, one part-timer gets a "heavy" role (available Mon/Tue/Fri)
+   * and the other a "light" role (available only Wed/Thu), swapping every week for fairness. Since
+   * that alone doesn't guarantee equal monthly hours between them, whoever ends up behind has some
+   * of their own already-scheduled 4h days upgraded to an 8h PARTTIME_LONG_SHIFTS day to catch up. */
+  ptLongShortWeek?: boolean;
 }

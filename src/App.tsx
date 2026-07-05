@@ -72,7 +72,7 @@ function App() {
   const [unavailability, setUnavailability] = useState<UnavailabilityMap>(() =>
     loadUnavailability(),
   );
-  const [ptRegularityMode, setPtRegularityMode] = useState(false);
+  const [ptLongShortWeek, setPtLongShortWeek] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
 
   useEffect(() => saveEmployees(employees), [employees]);
@@ -133,7 +133,7 @@ function App() {
     }
     setAssignments(
       generateSchedule(year, month, employees, unavailability, {
-        ptRegularityMode,
+        ptLongShortWeek,
       }),
     );
   }
@@ -265,13 +265,16 @@ function App() {
           >
             ›
           </button>
-          <label className="regularity-toggle">
+          <label
+            className="regularity-toggle"
+            title="Víkend se počítá jako 19 h, zbylých ~61 h do 80h stropu se rovnoměrně rozloží do týdnů v měsíci"
+          >
             <input
               type="checkbox"
-              checked={ptRegularityMode}
-              onChange={(e) => setPtRegularityMode(e.target.checked)}
+              checked={ptLongShortWeek}
+              onChange={(e) => setPtLongShortWeek(e.target.checked)}
             />
-            Pravidelné směny pro poloviční úvazek
+            Dlouhý/krátký týden pro poloviční úvazek
           </label>
           <button
             type="button"
