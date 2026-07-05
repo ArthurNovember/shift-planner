@@ -277,12 +277,19 @@ function App() {
             className="regularity-toggle"
             title="Víkend se počítá jako 19 h, zbylých ~61 h do 80h stropu se rovnoměrně rozloží do týdnů v měsíci"
           >
-            <input
-              type="checkbox"
-              checked={ptLongShortWeek}
-              onChange={(e) => setPtLongShortWeek(e.target.checked)}
-            />
             Dlouhý/krátký týden pro poloviční úvazek
+            <button
+              type="button"
+              className="switch"
+              role="switch"
+              aria-checked={ptLongShortWeek}
+              aria-label="Dlouhý/krátký týden pro poloviční úvazek"
+              onClick={() => setPtLongShortWeek(!ptLongShortWeek)}
+            >
+              <span className="switch-track">
+                <span className="switch-thumb" />
+              </span>
+            </button>
           </label>
           <button
             type="button"
