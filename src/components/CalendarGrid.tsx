@@ -113,7 +113,10 @@ export function CalendarGrid({
 
           return (
             <div key={idx} className={`calendar-cell${isWeekend ? ' weekend' : ''}`}>
-              <div className="calendar-cell-date">{day}</div>
+              <div className="calendar-cell-date">
+                <span className="calendar-cell-weekday">{WEEKDAY_LABELS[(dow + 6) % 7]}</span>
+                {day}
+              </div>
               <div className="calendar-cell-shifts">
                 {dayItems.map(({ a, i }) => (
                   <div key={i} className="shift-block" style={{ borderColor: employeeColor(a.employeeId, employees) }}>

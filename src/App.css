@@ -13,6 +13,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 20px;
+  box-sizing: border-box;
 }
 
 .auth-form {
@@ -98,6 +100,7 @@
 .month-nav {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
 }
 
@@ -246,6 +249,7 @@
 .warnings-column {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .availability-panel {
@@ -256,6 +260,7 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-width: 0;
 }
 
 .main-content {
@@ -590,6 +595,19 @@ select {
   font-size: 20px;
   font-weight: 600;
   color: var(--text-h);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.calendar-cell-weekday {
+  display: none;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--accent-text);
 }
 
 .calendar-cell-shifts {
@@ -712,6 +730,14 @@ select {
   background: rgba(23, 182, 245, 0.12);
 }
 
+.availability-table thead th:first-child,
+.availability-name {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--bg);
+}
+
 .availability-name {
   text-align: left !important;
   padding-right: 10px !important;
@@ -785,6 +811,7 @@ select {
   padding: 14px;
   overflow-y: auto;
   z-index: 1;
+  box-sizing: border-box;
 }
 
 .space-scene-today h2 {
@@ -898,5 +925,138 @@ select {
 @media (prefers-reduced-motion: reduce) {
   .orbit-ring {
     animation: none;
+  }
+}
+
+/* Mobile layout */
+@media (max-width: 768px) {
+  .app {
+    padding: 14px;
+  }
+
+  .app-header {
+    margin: 0 -14px 20px;
+    padding: 12px 14px 16px;
+    gap: 10px;
+  }
+
+  .app-header h1 {
+    font-size: 22px;
+  }
+
+  .app-subtitle {
+    font-size: 11px;
+    letter-spacing: 1.4px;
+  }
+
+  .month-nav {
+    gap: 8px;
+    width: 100%;
+  }
+
+  .month-label {
+    min-width: 0;
+  }
+
+  .regularity-toggle {
+    white-space: normal;
+  }
+
+  .auth-form {
+    max-width: 100%;
+  }
+
+  /* Calendar becomes a one-day-per-row agenda instead of a 7-column grid, which has no
+     usable width left on a phone screen. */
+  .calendar-panel {
+    padding: 6px;
+  }
+
+  .calendar-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .calendar-header-cell,
+  .calendar-cell.empty {
+    display: none;
+  }
+
+  .calendar-cell {
+    min-height: 0;
+  }
+
+  .calendar-cell-weekday {
+    display: inline;
+  }
+
+  /* A full-width agenda row has far more room than the squeezed desktop grid column did,
+     so shift details can afford to be bigger and easier to tap/read. */
+  .shift-block {
+    font-size: 13px;
+    padding: 8px 10px;
+  }
+
+  .shift-kind-label {
+    font-size: 13px;
+  }
+
+  .shift-time-input {
+    font-size: 13px;
+    width: 84px;
+    padding: 3px 5px;
+  }
+
+  .shift-employee-row select,
+  .add-shift-row select {
+    font-size: 13px;
+    padding: 4px 6px;
+  }
+
+  .shift-employee-row .icon-btn,
+  .add-shift-row .icon-btn {
+    width: 26px;
+    height: 26px;
+    font-size: 15px;
+  }
+
+  /* Availability grid keeps its horizontal scroll (a whole month never fits stacked either
+     way), but touch targets grow closer to a comfortable tap size. */
+  .availability-cell {
+    width: 34px;
+    height: 34px;
+  }
+
+  .availability-subcell {
+    width: 24px;
+    height: 34px;
+    font-size: 11px;
+  }
+
+  /* Today's-shifts panel stacks above the orbit animation instead of overlaying it - there's
+     no spare width on a phone for a floating sidebar. */
+  .space-scene {
+    flex-direction: column;
+    min-height: 380px;
+  }
+
+  .space-scene-today {
+    position: static;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+    padding: 14px 14px 0;
+  }
+
+  .orbit-system {
+    top: auto;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%) scale(0.72);
+  }
+
+  .app-footer {
+    justify-content: center;
+    flex-wrap: wrap;
   }
 }
