@@ -32,7 +32,7 @@ export function HoursSummary({ employees, hoursByEmployee }: Props) {
                   {emp.name}
                 </td>
                 <td className={over ? 'over-limit' : undefined}>{hours.toFixed(1)} h</td>
-                <td>{emp.type === 'parttime' ? `${PARTTIME_MONTHLY_CAP} h` : `~${FULLTIME_TARGET_HOURS} h`}</td>
+                <td>{emp.type === 'parttime' ? `${PARTTIME_MONTHLY_CAP} h` : `${FULLTIME_TARGET_HOURS} h`}</td>
               </tr>
             );
           })}

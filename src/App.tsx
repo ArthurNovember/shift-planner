@@ -131,10 +131,18 @@ function App() {
       );
       if (!confirmed) return;
     }
+    const previousMonth = month === 0 ? 11 : month - 1;
+    const previousYear = month === 0 ? year - 1 : year;
+    const previousAssignments = schedules[monthKey(previousYear, previousMonth)] ?? [];
     setAssignments(
-      generateSchedule(year, month, employees, unavailability, {
-        ptLongShortWeek,
-      }),
+      generateSchedule(
+        year,
+        month,
+        employees,
+        unavailability,
+        { ptLongShortWeek },
+        previousAssignments,
+      ),
     );
   }
 

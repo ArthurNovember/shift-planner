@@ -71,11 +71,12 @@ export const PARTTIME_MONTHLY_CAP = 80;
  * regardless of how many weekdays/weekends that particular month happens to have. */
 export const FULLTIME_TARGET_HOURS = 160;
 
-/** How far a fulltime employee's actual monthly hours may drift from the target before it's
- * flagged - the generator only balances to the day (8.5h chunks) and occasionally has to give
- * someone a second weekend in a month with 5 Saturdays, so some drift is normal; this catches
- * genuinely large deviations without flagging every ordinary month. */
-export const FULLTIME_HOURS_TOLERANCE = 15;
+/** How far over the fulltime target actual monthly hours may go before it's flagged - the
+ * generator only balances to the day (8.5h chunks), so up to about half a day either way is
+ * normal rounding, not a problem. Anything past this is a genuine anomaly (a forced second
+ * weekend in a 5-Saturday month, heavy unavailability, etc.) worth surfacing, same as part-time's
+ * cap warning. */
+export const FULLTIME_HOURS_TOLERANCE = 5;
 
 /** A week where the employee covers the weekend (~19h) gets this many fewer weekday shifts,
  * to balance out that extra weekend load and give them a real rest around it. */
