@@ -41,14 +41,16 @@ export function SpaceScene({
               if (!emp) return null;
               return (
                 <li key={i} className="today-shift-row">
-                  <span
-                    className="color-dot"
-                    style={{ background: employeeColor(emp.id, employees) }}
-                  />
-                  <span className="today-shift-name">{emp.name}</span>
-                  <span className="today-shift-kind">
-                    {KIND_LABELS[a.shift.kind]}
-                  </span>
+                  <div className="today-shift-header">
+                    <span
+                      className="color-dot"
+                      style={{ background: employeeColor(emp.id, employees) }}
+                    />
+                    <span className="today-shift-name">{emp.name}</span>
+                    <span className="today-shift-kind">
+                      {KIND_LABELS[a.shift.kind]}
+                    </span>
+                  </div>
                   <span className="today-shift-time">
                     {a.shift.start}–{a.shift.end}
                   </span>

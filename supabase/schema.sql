@@ -24,9 +24,18 @@ create table if not exists unavailability_state (
   constraint unavailability_state_singleton check (id = 1)
 );
 
+-- monthKey -> list of dismissed warning messages ("I know about this, it's fine").
+create table if not exists dismissed_warnings_state (
+  id int primary key default 1,
+  data jsonb not null,
+  updated_at timestamptz not null default now(),
+  constraint dismissed_warnings_state_singleton check (id = 1)
+);
+
 alter table employees_state enable row level security;
 alter table schedules_state enable row level security;
 alter table unavailability_state enable row level security;
+alter table dismissed_warnings_state enable row level security;
 
 create policy "authenticated only" on employees_state
   for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
@@ -35,4 +44,7 @@ create policy "authenticated only" on schedules_state
   for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
 
 create policy "authenticated only" on unavailability_state
+  for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+create policy "authenticated only" on dismissed_warnings_state
   for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');

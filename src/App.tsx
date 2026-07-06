@@ -15,17 +15,19 @@ import {
   totalHoursByEmployee,
 } from "./scheduler";
 import { employeeColor } from "./colors";
-import type { SchedulesMap, Theme } from "./storage";
+import type { DismissedWarningsMap, SchedulesMap, Theme } from "./storage";
 import {
   DEFAULT_EMPLOYEES,
   hasCloudData,
   hasLocalData,
+  loadDismissedWarnings,
   loadEmployees,
   loadLocalSnapshot,
   loadSchedules,
   loadTheme,
   loadUnavailability,
   monthKey,
+  saveDismissedWarnings,
   saveEmployees,
   saveSchedules,
   saveTheme,
@@ -71,10 +73,13 @@ function AppContent() {
   const [month, setMonth] = useState(today.getMonth());
   const [schedules, setSchedules] = useState<SchedulesMap>({});
   const [unavailability, setUnavailability] = useState<UnavailabilityMap>({});
+  const [dismissedWarnings, setDismissedWarnings] = useState<DismissedWarningsMap>({});
   const [ptLongShortWeek, setPtLongShortWeek] = useState(false);
   const [icsEmployeeId, setIcsEmployeeId] = useState("all");
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [saveError, setSaveError] = useState(false);
   const [highlightedDate, setHighlightedDate] = useState<string | null>(null);
   const [preGenerateSnapshot, setPreGenerateSnapshot] = useState<{ key: string; assignments: Assignment[] } | null>(
@@ -101,6 +106,14 @@ function AppContent() {
   // One-time load from the shared cloud storage on login. If the cloud is still empty but this
   // browser has real data from before the switch to cloud storage, offer to upload it instead of
   // silently starting from an empty state.
+  //
+  // Critical: `loaded` must only ever become true once the real data has actually been fetched
+  // and applied to state - the save-effects below are gated on it, and fire the moment it flips.
+  // If a load fails partway (e.g. a transient network hiccup, or a table that briefly didn't
+  // exist yet) and `loaded` were set anyway, those save-effects would immediately persist
+  // whatever's still sitting in the initial default state (empty schedules, default employees)
+  // straight over the real cloud data, wiping it out. So on any failure here, `loaded` simply
+  // never gets set - the app stays on the loading screen with a retry option instead.
   useEffect(() => {
     let cancelled = false;
     async function init() {
@@ -121,25 +134,32 @@ function AppContent() {
             setEmployees(snapshot.employees);
             setSchedules(snapshot.schedules);
             setUnavailability(snapshot.unavailability);
+            setLoaded(true);
             return;
           }
         }
-        const [emp, sched, unavail] = await Promise.all([loadEmployees(), loadSchedules(), loadUnavailability()]);
+        const [emp, sched, unavail, dismissed] = await Promise.all([
+          loadEmployees(),
+          loadSchedules(),
+          loadUnavailability(),
+          loadDismissedWarnings(),
+        ]);
         if (cancelled) return;
         setEmployees(emp);
         setSchedules(sched);
         setUnavailability(unavail);
+        setDismissedWarnings(dismissed);
+        setLoaded(true);
       } catch (err) {
         console.error(err);
-      } finally {
-        if (!cancelled) setLoaded(true);
+        if (!cancelled) setLoadError(true);
       }
     }
     init();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadAttempt]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -163,14 +183,44 @@ function AppContent() {
       .then(() => setSaveError(false))
       .catch(() => setSaveError(true));
   }, [unavailability, loaded]);
+  useEffect(() => {
+    if (!loaded) return;
+    saveDismissedWarnings(dismissedWarnings)
+      .then(() => setSaveError(false))
+      .catch(() => setSaveError(true));
+  }, [dismissedWarnings, loaded]);
 
   const key = monthKey(year, month);
   const assignments = useMemo(() => schedules[key] ?? [], [schedules, key]);
 
-  const warnings = useMemo(
+  const allWarnings = useMemo(
     () => computeWarnings(year, month, employees, assignments, unavailability),
     [year, month, employees, assignments, unavailability],
   );
+  const dismissedForMonth = useMemo(() => dismissedWarnings[key] ?? [], [dismissedWarnings, key]);
+  const warnings = useMemo(
+    () => allWarnings.filter((w) => !dismissedForMonth.includes(w.message)),
+    [allWarnings, dismissedForMonth],
+  );
+  const dismissedWarningObjects = useMemo(
+    () => allWarnings.filter((w) => dismissedForMonth.includes(w.message)),
+    [allWarnings, dismissedForMonth],
+  );
+
+  function handleDismissWarning(message: string) {
+    setDismissedWarnings((prev) => {
+      const current = prev[key] ?? [];
+      if (current.includes(message)) return prev;
+      return { ...prev, [key]: [...current, message] };
+    });
+  }
+
+  function handleRestoreWarning(message: string) {
+    setDismissedWarnings((prev) => {
+      const current = prev[key] ?? [];
+      return { ...prev, [key]: current.filter((m) => m !== message) };
+    });
+  }
   const hoursByEmployee = useMemo(
     () => totalHoursByEmployee(assignments, employees),
     [assignments, employees],
@@ -378,6 +428,30 @@ function AppContent() {
     setYear(newYear);
   }
 
+  if (loadError) {
+    return (
+      <div className="auth-screen">
+        <div className="load-error">
+          <p className="muted">
+            Nepodařilo se načíst data z cloudu. Zkontrolujte připojení k internetu a zkuste to
+            znovu - appka záměrně nic neukládá, dokud se data úspěšně nenačtou, ať se nic
+            nepřepíše.
+          </p>
+          <button
+            type="button"
+            className="primary-btn"
+            onClick={() => {
+              setLoadError(false);
+              setLoadAttempt((n) => n + 1);
+            }}
+          >
+            Zkusit znovu
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!loaded) {
     return (
       <div className="auth-screen">
@@ -471,7 +545,14 @@ function AppContent() {
         </main>
 
         <aside className="warnings-column">
-          <WarningsPanel warnings={warnings} onWarningClick={handleWarningClick} minHeight={sidebarHeight} />
+          <WarningsPanel
+            warnings={warnings}
+            onWarningClick={handleWarningClick}
+            minHeight={sidebarHeight}
+            onDismiss={handleDismissWarning}
+            dismissedWarnings={dismissedWarningObjects}
+            onRestore={handleRestoreWarning}
+          />
         </aside>
       </div>
 

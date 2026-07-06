@@ -33,7 +33,6 @@ export interface Assignment {
 export type WarningType =
   | 'pt-hours-exceeded'
   | 'ft-hours-deviation'
-  | 'weekend-uneven'
   | 'coverage-gap'
   | 'availability-conflict';
 

@@ -750,28 +750,6 @@ export function computeWarnings(
       }
     });
 
-  // Weekend fairness: everyone should get roughly one weekend a month
-  const weekendCountByEmployee = new Map<string, number>();
-  assignments
-    .filter((a) => a.shift.kind === 'weekend')
-    .forEach((a) => {
-      const d = new Date(a.date);
-      if (d.getDay() === 6) {
-        weekendCountByEmployee.set(a.employeeId, (weekendCountByEmployee.get(a.employeeId) ?? 0) + 1);
-      }
-    });
-  if (employees.length > 0) {
-    const counts = employees.map((e) => weekendCountByEmployee.get(e.id) ?? 0);
-    const max = Math.max(...counts);
-    const min = Math.min(...counts);
-    if (max - min > 1) {
-      warnings.push({
-        type: 'weekend-uneven',
-        message: `Víkendy nejsou letos rozdělené rovnoměrně – rozdíl mezi nejvíc a nejméně vytíženým člověkem je ${max - min} víkendy. Zkontrolujte rozpis.`,
-      });
-    }
-  }
-
   // Coverage gaps: missing morning/afternoon slot on weekdays, missing weekend coverage
   for (let day = 1; day <= totalDays; day++) {
     const d = new Date(year, month, day);

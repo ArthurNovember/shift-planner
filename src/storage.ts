@@ -26,6 +26,11 @@ export const DEFAULT_EMPLOYEES: Employee[] = [
 
 export type SchedulesMap = Record<string, Assignment[]>;
 
+// monthKey -> list of warning messages the user has dismissed as "known, fine as is" (e.g. a
+// coverage gap because someone's doing inventory that day) - dismissal is by message text since
+// that's the only thing that actually identifies one specific warning instance today.
+export type DismissedWarningsMap = Record<string, string[]>;
+
 type SerializedUnavailability = Record<string, Record<string, ('morning' | 'afternoon')[]>>;
 
 function deserializeUnavailability(parsed: SerializedUnavailability): UnavailabilityMap {
@@ -93,6 +98,19 @@ export async function saveUnavailability(unavailability: UnavailabilityMap): Pro
   const { error } = await supabase
     .from('unavailability_state')
     .upsert({ id: 1, data: serializeUnavailability(unavailability), updated_at: new Date().toISOString() });
+  if (error) throw error;
+}
+
+export async function loadDismissedWarnings(): Promise<DismissedWarningsMap> {
+  const { data, error } = await supabase.from('dismissed_warnings_state').select('data').eq('id', 1).maybeSingle();
+  if (error) throw error;
+  return (data?.data as DismissedWarningsMap | undefined) ?? {};
+}
+
+export async function saveDismissedWarnings(dismissedWarnings: DismissedWarningsMap): Promise<void> {
+  const { error } = await supabase
+    .from('dismissed_warnings_state')
+    .upsert({ id: 1, data: dismissedWarnings, updated_at: new Date().toISOString() });
   if (error) throw error;
 }
 
