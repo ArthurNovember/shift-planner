@@ -16,6 +16,7 @@ const KIND_LABELS: Record<Assignment["shift"]["kind"], string> = {
   morning: "Ranní",
   afternoon: "Odpolední",
   weekend: "Víkendová",
+  holiday: "Svátek",
 };
 
 export function SpaceScene({

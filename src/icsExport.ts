@@ -4,6 +4,7 @@ const SHIFT_LABELS: Record<string, string> = {
   morning: 'Ranní',
   afternoon: 'Odpolední',
   weekend: 'Víkendová',
+  holiday: 'Sváteční',
 };
 
 function pad(n: number): string {

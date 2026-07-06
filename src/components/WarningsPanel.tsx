@@ -15,6 +15,7 @@ const SEVERITY: Record<ScheduleWarning['type'], 'high' | 'medium'> = {
   'ft-hours-deviation': 'high',
   'coverage-gap': 'high',
   'availability-conflict': 'high',
+  'holiday-shift': 'medium',
 };
 
 export function WarningsPanel({

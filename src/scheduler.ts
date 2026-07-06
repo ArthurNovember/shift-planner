@@ -4,14 +4,17 @@ import {
   FT_TOGETHER_CHANCE,
   FULLTIME_HOURS_TOLERANCE,
   FULLTIME_TARGET_HOURS,
+  HOLIDAY_SHIFT,
   PARTTIME_MONTHLY_CAP,
   SHIFTS,
   WEEKEND_SHIFT,
 } from './types';
+import { getCzechHolidays } from './holidays';
 
-/** Which shift definitions make sense for this employee on a weekday vs. weekend day. */
-export function shiftOptionsFor(employee: Employee, isWeekend: boolean): ShiftDefinition[] {
+/** Which shift definitions make sense for this employee on a weekday vs. weekend vs. holiday day. */
+export function shiftOptionsFor(employee: Employee, isWeekend: boolean, isHoliday = false): ShiftDefinition[] {
   if (isWeekend) return [WEEKEND_SHIFT];
+  if (isHoliday) return [HOLIDAY_SHIFT];
   return [SHIFTS[employee.type].morning, SHIFTS[employee.type].afternoon];
 }
 
@@ -74,10 +77,18 @@ export function generateSchedule(
   // originally generated.
   const previousHoursByEmployee = new Map<string, number>();
   const previousWeekendEmployees = new Set<string>();
+  const previousHolidayCounts = new Map<string, number>();
   previousAssignments.forEach((a) => {
     previousHoursByEmployee.set(a.employeeId, (previousHoursByEmployee.get(a.employeeId) ?? 0) + a.shift.hours);
     if (a.shift.kind === 'weekend') previousWeekendEmployees.add(a.employeeId);
+    if (a.shift.kind === 'holiday') previousHolidayCounts.set(a.employeeId, (previousHolidayCounts.get(a.employeeId) ?? 0) + 1);
   });
+
+  // Czech public holidays this calendar year - a holiday weekday isn't a normal business day at
+  // all (see the skeleton-crew block further down), so it's excluded from weekdaysByWeekKey below
+  // the same way weekends already are, keeping it invisible to the regular fulltime/part-time
+  // machinery entirely instead of needing special-cased checks scattered through it.
+  const holidays = getCzechHolidays(year);
 
   /** This month's fulltime target, nudged opposite last month's miss (over last time -> a bit
    * lower this time, and vice versa) so a two-month pair averages back toward the nominal 160h
@@ -127,6 +138,7 @@ export function generateSchedule(
     const d = new Date(year, month, day);
     const dow = d.getDay();
     if (dow === 0 || dow === 6) continue;
+    if (holidays.has(toISODate(d))) continue;
     const weekKey = toISODate(mondayOf(d));
     if (!weekdaysByWeekKey.has(weekKey)) weekdaysByWeekKey.set(weekKey, []);
     weekdaysByWeekKey.get(weekKey)!.push(d);
@@ -314,6 +326,49 @@ export function generateSchedule(
 
   function isShortWeek(employeeId: string, weekKey: string): boolean {
     return weekendEmployeeByWeekKey.get(weekKey)?.has(employeeId) ?? false;
+  }
+
+  // --- Holidays: a public holiday falling on a weekday isn't a normal business day - instead of
+  //     full morning+afternoon coverage, a single person covers it as a skeleton crew (already
+  //     excluded from weekdaysByWeekKey above, so the fulltime/part-time machinery never sees these
+  //     dates at all). A holiday landing on a Saturday/Sunday needs no extra handling here - the
+  //     weekend block above already covers it the same as any other weekend. Fairness: fewest
+  //     holiday shifts so far wins (seeded from last month's actual counts, same idea as
+  //     weekendCredits), ties broken randomly. A calendar-position-based round-robin (like the
+  //     weekend rotation's own starting point) was tried instead, but since a holiday only shows up
+  //     in a given month 0-1 times, the same calendar months (e.g. every January) would then always
+  //     land on the same person forever - random tie-breaking avoids that permanent bias, at the
+  //     cost of a bit of luck-driven variance in any single year, which evens out over many.
+  const holidayCredits = new Map<string, number>();
+  employees.forEach((e) => holidayCredits.set(e.id, previousHolidayCounts.get(e.id) ?? 0));
+
+  for (let day = 1; day <= totalDays; day++) {
+    const d = new Date(year, month, day);
+    const dow = d.getDay();
+    if (dow === 0 || dow === 6) continue;
+    const iso = toISODate(d);
+    if (!holidays.has(iso)) continue;
+
+    const pickBest = (candidates: Employee[]): Employee | undefined => {
+      let best: Employee | undefined;
+      let bestCredits = Infinity;
+      candidates.forEach((emp) => {
+        const credits = holidayCredits.get(emp.id)!;
+        if (credits < bestCredits || (credits === bestCredits && Math.random() < 0.5)) {
+          bestCredits = credits;
+          best = emp;
+        }
+      });
+      return best;
+    };
+
+    // Prefer someone actually available that day; if literally nobody marked themselves free,
+    // cover it anyway as an absolute last resort (same last-resort spirit as the weekend block).
+    const best = pickBest(employees.filter((emp) => !isUnavailable(emp.id, iso))) ?? pickBest(employees);
+    if (best) {
+      assignments.push({ date: iso, employeeId: best.id, shift: HOLIDAY_SHIFT });
+      holidayCredits.set(best.id, holidayCredits.get(best.id)! + 1);
+    }
   }
 
   // --- Fulltime: work backwards from the ~160h/month target to figure out how many days
@@ -673,10 +728,11 @@ export function generateSchedule(
 }
 
 /** Recomputes warnings from the current assignments, so manual edits stay validated too. */
-const AVAILABILITY_KIND_LABELS: Record<'morning' | 'afternoon' | 'weekend', string> = {
+const AVAILABILITY_KIND_LABELS: Record<'morning' | 'afternoon' | 'weekend' | 'holiday', string> = {
   morning: 'ranní',
   afternoon: 'odpolední',
   weekend: 'víkendovou',
+  holiday: 'sváteční',
 };
 
 export function computeWarnings(
@@ -690,6 +746,25 @@ export function computeWarnings(
   const warnings: ScheduleWarning[] = [];
   const totalDays = daysInMonth(year, month);
   const employeeById = new Map(employees.map((e) => [e.id, e]));
+  const holidays = getCzechHolidays(year);
+
+  // Informational reminder whenever someone has a shift on a public holiday - whether it's the
+  // generator's own intentional single skeleton-crew assignment or a manually added extra one.
+  // Weekend shifts are excluded: a weekend is never a "normal" business day to begin with, so a
+  // holiday coinciding with one doesn't change anything worth flagging.
+  assignments.forEach((a) => {
+    if (a.shift.kind === 'weekend') return;
+    const holidayName = holidays.get(a.date);
+    if (!holidayName) return;
+    const emp = employeeById.get(a.employeeId);
+    if (!emp) return;
+    warnings.push({
+      type: 'holiday-shift',
+      employeeId: a.employeeId,
+      date: a.date,
+      message: `${emp.name}: má naplánovanou směnu na ${a.date} (${holidayName}).`,
+    });
+  });
 
   // Manual edits (moving/adding an assignment by hand) can put someone on a shift they've
   // marked themselves unavailable for - the generator itself never does this, so it's only
@@ -699,7 +774,10 @@ export function computeWarnings(
     if (!emp) return;
     const marks = unavailability[a.employeeId]?.[a.date];
     if (!marks) return;
-    const conflict = a.shift.kind === 'weekend' ? marks.has('morning') && marks.has('afternoon') : marks.has(a.shift.kind);
+    const conflict =
+      a.shift.kind === 'weekend' || a.shift.kind === 'holiday'
+        ? marks.has('morning') && marks.has('afternoon')
+        : marks.has(a.shift.kind);
     if (conflict) {
       warnings.push({
         type: 'availability-conflict',
@@ -762,6 +840,10 @@ export function computeWarnings(
       }
       continue;
     }
+    // A weekday holiday deliberately gets only the single skeleton-crew shift, not full
+    // morning+afternoon coverage - that's the intended state (see the holiday-shift warning
+    // above), not something missing to flag.
+    if (holidays.has(iso)) continue;
     const hasMorning = dayAssignments.some((a) => a.shift.kind === 'morning');
     const hasAfternoon = dayAssignments.some((a) => a.shift.kind === 'afternoon');
     if (!hasMorning) {

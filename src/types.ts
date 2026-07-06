@@ -8,7 +8,7 @@ export interface Employee {
   color?: string;
 }
 
-export type ShiftKind = 'morning' | 'afternoon' | 'weekend';
+export type ShiftKind = 'morning' | 'afternoon' | 'weekend' | 'holiday';
 
 export interface ShiftDefinition {
   kind: ShiftKind;
@@ -34,7 +34,8 @@ export type WarningType =
   | 'pt-hours-exceeded'
   | 'ft-hours-deviation'
   | 'coverage-gap'
-  | 'availability-conflict';
+  | 'availability-conflict'
+  | 'holiday-shift';
 
 export interface ScheduleWarning {
   type: WarningType;
@@ -65,6 +66,10 @@ export const SHIFTS: Record<'fulltime' | 'parttime', { morning: ShiftDefinition;
 // The weekend shift is a 9.5h span for whoever covers it, full or part time - also over 6h, so
 // the same break applies.
 export const WEEKEND_SHIFT: ShiftDefinition = { kind: 'weekend', start: '10:15', end: '19:45', hours: 9, breakMinutes: 30 };
+
+// On a public holiday the team runs a skeleton crew - one person for the whole day - instead of
+// the usual full morning+afternoon coverage.
+export const HOLIDAY_SHIFT: ShiftDefinition = { kind: 'holiday', start: '09:00', end: '17:30', hours: 8, breakMinutes: 30 };
 
 /** Target and soft cap for part-time monthly hours: the generator fills shifts up to this total. */
 export const PARTTIME_MONTHLY_CAP = 80;

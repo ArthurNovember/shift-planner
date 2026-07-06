@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { Assignment, Employee, ShiftDefinition } from '../types';
 import { daysInMonth, hoursBetween, shiftOptionsFor, toISODate } from '../scheduler';
 import { employeeColor } from '../colors';
+import { getCzechHolidays } from '../holidays';
 
 interface Props {
   year: number;
@@ -22,24 +23,27 @@ const SHIFT_LABELS: Record<ShiftDefinition['kind'], string> = {
   morning: 'Ranní',
   afternoon: 'Odpolední',
   weekend: 'Víkendová',
+  holiday: 'Svátek',
 };
 
 function AddShiftRow({
   employees,
   isWeekend,
+  isHoliday,
   onAdd,
 }: {
   employees: Employee[];
   isWeekend: boolean;
+  isHoliday: boolean;
   onAdd: (employeeId: string, shift: ShiftDefinition) => void;
 }) {
   const [employeeId, setEmployeeId] = useState(employees[0]?.id ?? '');
   const employee = employees.find((e) => e.id === employeeId) ?? employees[0];
-  const options = employee ? shiftOptionsFor(employee, isWeekend) : [];
+  const options = employee ? shiftOptionsFor(employee, isWeekend, isHoliday) : [];
   const [shiftKind, setShiftKind] = useState(options[0]?.kind ?? 'morning');
 
   if (!employee) return null;
-  const currentOptions = shiftOptionsFor(employee, isWeekend);
+  const currentOptions = shiftOptionsFor(employee, isWeekend, isHoliday);
   const selectedShift = currentOptions.find((s) => s.kind === shiftKind) ?? currentOptions[0];
 
   return (
@@ -92,6 +96,7 @@ export function CalendarGrid({
   const totalDays = daysInMonth(year, month);
   const firstDow = (new Date(year, month, 1).getDay() + 6) % 7; // Monday = 0
   const todayIso = toISODate(new Date());
+  const holidays = getCzechHolidays(year);
 
   const cells: (number | null)[] = [];
   for (let i = 0; i < firstDow; i++) cells.push(null);
@@ -120,17 +125,20 @@ export function CalendarGrid({
 
           const isToday = iso === todayIso;
           const isHighlighted = iso === highlightedDate;
+          const holidayName = holidays.get(iso);
+          const isHoliday = !isWeekend && !!holidayName;
 
           return (
             <div
               key={idx}
               id={`day-${iso}`}
-              className={`calendar-cell${isWeekend ? ' weekend' : ''}${isToday ? ' today' : ''}${isHighlighted ? ' highlighted' : ''}`}
+              className={`calendar-cell${isWeekend ? ' weekend' : ''}${isHoliday ? ' holiday' : ''}${isToday ? ' today' : ''}${isHighlighted ? ' highlighted' : ''}`}
             >
               <div className="calendar-cell-date">
                 <span className="calendar-cell-weekday">{WEEKDAY_LABELS[(dow + 6) % 7]}</span>
                 {day}
               </div>
+              {holidayName && <div className="calendar-cell-holiday-name">{holidayName}</div>}
               <div className="calendar-cell-shifts">
                 {dayItems.map(({ a, i }) => {
                   const duration = hoursBetween(a.shift.start, a.shift.end);
@@ -139,7 +147,7 @@ export function CalendarGrid({
                   return (
                   <div key={i} className="shift-block" style={{ borderColor: employeeColor(a.employeeId, employees) }}>
                     <div className="shift-time-row">
-                      {a.shift.kind === 'weekend' ? (
+                      {a.shift.kind === 'weekend' || a.shift.kind === 'holiday' ? (
                         <span className="shift-kind-label">{SHIFT_LABELS[a.shift.kind]}</span>
                       ) : (
                         <select
@@ -210,6 +218,7 @@ export function CalendarGrid({
                 <AddShiftRow
                   employees={employees}
                   isWeekend={isWeekend}
+                  isHoliday={isHoliday}
                   onAdd={(employeeId, shift) => onAddAssignment(iso, employeeId, shift)}
                 />
               )}

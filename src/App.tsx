@@ -6,7 +6,7 @@ import type {
   ShiftDefinition,
   UnavailabilityMap,
 } from "./types";
-import { SHIFTS, WEEKEND_SHIFT } from "./types";
+import { HOLIDAY_SHIFT, SHIFTS, WEEKEND_SHIFT } from "./types";
 import {
   computeWarnings,
   generateSchedule,
@@ -63,6 +63,7 @@ function shiftForEmployee(
   kind: ShiftDefinition["kind"],
 ): ShiftDefinition {
   if (kind === "weekend") return WEEKEND_SHIFT;
+  if (kind === "holiday") return HOLIDAY_SHIFT;
   return SHIFTS[employee.type][kind];
 }
 
