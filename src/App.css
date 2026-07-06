@@ -704,6 +704,20 @@ select {
   gap: 6px;
 }
 
+/* Each week is its own grid (so the header stays aligned to the same 7 columns), stacked with
+   enough of a gap and a divider line between them that weeks read as distinct rows instead of
+   one long undifferentiated block of cells. */
+.calendar-weeks {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.calendar-week:not(:first-child) {
+  border-top: 1px solid var(--border);
+  padding-top: 18px;
+}
+
 .calendar-header-cell {
   text-align: center;
   font-family: var(--heading);
@@ -1205,7 +1219,7 @@ select {
     gap: 10px;
   }
 
-  .calendar-header-cell,
+  .calendar-grid-header,
   .calendar-cell.empty {
     display: none;
   }
