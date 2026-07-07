@@ -5,6 +5,7 @@ const EMPLOYEES_KEY = 'shiftPlanner.employees';
 const SCHEDULES_KEY = 'shiftPlanner.schedules';
 const UNAVAILABILITY_KEY = 'shiftPlanner.unavailability';
 const THEME_KEY = 'shiftPlanner.theme';
+const HISTORY_SEEN_KEY = 'shiftPlanner.historySeen';
 
 export type Theme = 'dark' | 'light';
 
@@ -30,6 +31,35 @@ export type SchedulesMap = Record<string, Assignment[]>;
 // coverage gap because someone's doing inventory that day) - dismissal is by message text since
 // that's the only thing that actually identifies one specific warning instance today.
 export type DismissedWarningsMap = Record<string, string[]>;
+
+export interface HistoryEntry {
+  timestamp: string; // ISO
+  message: string;
+}
+
+// monthKey -> edit-history entries for that month's schedule, oldest first.
+export type HistoryMap = Record<string, HistoryEntry[]>;
+
+// monthKey -> ISO timestamp of the newest history entry this browser has seen. This is
+// deliberately per-device localStorage, not cloud state - it's what lets each employee's
+// browser independently know whether *it* has seen the latest edits, same idea as THEME_KEY.
+export type HistorySeenMap = Record<string, string>;
+
+export function loadHistorySeen(): HistorySeenMap {
+  try {
+    const raw = localStorage.getItem(HISTORY_SEEN_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function markHistorySeen(monthKey: string, timestamp: string): HistorySeenMap {
+  const next = { ...loadHistorySeen(), [monthKey]: timestamp };
+  localStorage.setItem(HISTORY_SEEN_KEY, JSON.stringify(next));
+  return next;
+}
 
 type SerializedUnavailability = Record<string, Record<string, ('morning' | 'afternoon')[]>>;
 
@@ -111,6 +141,19 @@ export async function saveDismissedWarnings(dismissedWarnings: DismissedWarnings
   const { error } = await supabase
     .from('dismissed_warnings_state')
     .upsert({ id: 1, data: dismissedWarnings, updated_at: new Date().toISOString() });
+  if (error) throw error;
+}
+
+export async function loadHistory(): Promise<HistoryMap> {
+  const { data, error } = await supabase.from('schedule_history_state').select('data').eq('id', 1).maybeSingle();
+  if (error) throw error;
+  return (data?.data as HistoryMap | undefined) ?? {};
+}
+
+export async function saveHistory(history: HistoryMap): Promise<void> {
+  const { error } = await supabase
+    .from('schedule_history_state')
+    .upsert({ id: 1, data: history, updated_at: new Date().toISOString() });
   if (error) throw error;
 }
 

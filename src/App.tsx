@@ -15,20 +15,24 @@ import {
   totalHoursByEmployee,
 } from "./scheduler";
 import { employeeColor } from "./colors";
-import type { DismissedWarningsMap, SchedulesMap, Theme } from "./storage";
+import type { DismissedWarningsMap, HistoryMap, HistorySeenMap, SchedulesMap, Theme } from "./storage";
 import {
   DEFAULT_EMPLOYEES,
   hasCloudData,
   hasLocalData,
   loadDismissedWarnings,
   loadEmployees,
+  loadHistory,
+  loadHistorySeen,
   loadLocalSnapshot,
   loadSchedules,
   loadTheme,
   loadUnavailability,
+  markHistorySeen,
   monthKey,
   saveDismissedWarnings,
   saveEmployees,
+  saveHistory,
   saveSchedules,
   saveTheme,
   saveUnavailability,
@@ -41,7 +45,20 @@ import { HoursSummary } from "./components/HoursSummary";
 import { CalendarGrid } from "./components/CalendarGrid";
 import { AvailabilityGrid } from "./components/AvailabilityGrid";
 import { SpaceScene } from "./components/SpaceScene";
+import { HistoryPanel } from "./components/HistoryPanel";
 import "./App.css";
+
+const SHIFT_KIND_LABELS: Record<ShiftDefinition["kind"], string> = {
+  morning: "ranní",
+  afternoon: "odpolední",
+  weekend: "víkendová",
+  holiday: "sváteční",
+};
+
+function formatHistoryDay(iso: string): string {
+  const [, m, d] = iso.split("-").map(Number);
+  return `${d}. ${m}.`;
+}
 
 const MONTH_NAMES = [
   "Leden",
@@ -75,6 +92,8 @@ function AppContent() {
   const [schedules, setSchedules] = useState<SchedulesMap>({});
   const [unavailability, setUnavailability] = useState<UnavailabilityMap>({});
   const [dismissedWarnings, setDismissedWarnings] = useState<DismissedWarningsMap>({});
+  const [history, setHistory] = useState<HistoryMap>({});
+  const [historySeen, setHistorySeen] = useState<HistorySeenMap>(() => loadHistorySeen());
   const [ptLongShortWeek, setPtLongShortWeek] = useState(false);
   const [icsEmployeeId, setIcsEmployeeId] = useState("all");
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
@@ -139,17 +158,19 @@ function AppContent() {
             return;
           }
         }
-        const [emp, sched, unavail, dismissed] = await Promise.all([
+        const [emp, sched, unavail, dismissed, hist] = await Promise.all([
           loadEmployees(),
           loadSchedules(),
           loadUnavailability(),
           loadDismissedWarnings(),
+          loadHistory(),
         ]);
         if (cancelled) return;
         setEmployees(emp);
         setSchedules(sched);
         setUnavailability(unavail);
         setDismissedWarnings(dismissed);
+        setHistory(hist);
         setLoaded(true);
       } catch (err) {
         console.error(err);
@@ -190,9 +211,36 @@ function AppContent() {
       .then(() => setSaveError(false))
       .catch(() => setSaveError(true));
   }, [dismissedWarnings, loaded]);
+  useEffect(() => {
+    if (!loaded) return;
+    saveHistory(history)
+      .then(() => setSaveError(false))
+      .catch(() => setSaveError(true));
+  }, [history, loaded]);
 
   const key = monthKey(year, month);
   const assignments = useMemo(() => schedules[key] ?? [], [schedules, key]);
+
+  const monthHistory = useMemo(() => history[key] ?? [], [history, key]);
+  const hasUnseenHistory = useMemo(() => {
+    if (monthHistory.length === 0) return false;
+    const lastSeen = historySeen[key];
+    const newest = monthHistory[monthHistory.length - 1].timestamp;
+    return !lastSeen || newest > lastSeen;
+  }, [monthHistory, historySeen, key]);
+
+  function appendHistory(targetKey: string, message: string) {
+    setHistory((prev) => {
+      const entries = prev[targetKey] ?? [];
+      return { ...prev, [targetKey]: [...entries, { timestamp: new Date().toISOString(), message }] };
+    });
+  }
+
+  function handleOpenHistory() {
+    if (monthHistory.length === 0) return;
+    const newest = monthHistory[monthHistory.length - 1].timestamp;
+    setHistorySeen(markHistorySeen(key, newest));
+  }
 
   const allWarnings = useMemo(
     () => computeWarnings(year, month, employees, assignments, unavailability),
@@ -256,7 +304,8 @@ function AppContent() {
   }
 
   function handleGenerate() {
-    if (assignments.length > 0) {
+    const hadExisting = assignments.length > 0;
+    if (hadExisting) {
       const confirmed = window.confirm(
         "Pro tento měsíc už existuje rozvrh. Vygenerovat znovu a přepsat ruční úpravy?",
       );
@@ -276,12 +325,14 @@ function AppContent() {
         previousAssignments,
       ),
     );
+    appendHistory(key, hadExisting ? "Rozvrh byl vygenerován znovu." : "Rozvrh byl vygenerován.");
   }
 
   function handleRevertGenerate() {
     if (!preGenerateSnapshot || preGenerateSnapshot.key !== key) return;
     setAssignments(preGenerateSnapshot.assignments);
     setPreGenerateSnapshot(null);
+    appendHistory(key, "Vygenerování rozvrhu bylo vráceno zpět.");
   }
 
   function handleExportPdf() {
@@ -341,6 +392,8 @@ function AppContent() {
   ) {
     const employee = employees.find((e) => e.id === newEmployeeId);
     if (!employee) return;
+    const previous = assignments[index];
+    const previousEmployee = employees.find((e) => e.id === previous.employeeId);
     const next = assignments.map((a, i) =>
       i === index
         ? {
@@ -351,6 +404,10 @@ function AppContent() {
         : a,
     );
     setAssignments(next);
+    appendHistory(
+      key,
+      `Směna ${formatHistoryDay(previous.date)} přesunuta z ${previousEmployee?.name ?? "?"} na ${employee.name}.`,
+    );
   }
 
   function handleUpdateAssignmentKind(index: number, kind: "morning" | "afternoon") {
@@ -359,6 +416,10 @@ function AppContent() {
     if (!employee) return;
     const next = assignments.map((x, i) => (i === index ? { ...x, shift: shiftForEmployee(employee, kind) } : x));
     setAssignments(next);
+    appendHistory(
+      key,
+      `Změněn typ směny (${employee.name}, ${formatHistoryDay(a.date)}) na ${SHIFT_KIND_LABELS[kind]}.`,
+    );
   }
 
   function handleUpdateAssignmentTime(
@@ -367,6 +428,8 @@ function AppContent() {
     value: string,
   ) {
     if (!value) return;
+    const a = assignments[index];
+    const employee = employees.find((e) => e.id === a.employeeId);
     const next = assignments.map((a, i) => {
       if (i !== index) return a;
       const start = field === "start" ? value : a.shift.start;
@@ -382,9 +445,16 @@ function AppContent() {
       };
     });
     setAssignments(next);
+    appendHistory(
+      key,
+      `Upraven ${field === "start" ? "začátek" : "konec"} směny (${employee?.name ?? "?"}, ${formatHistoryDay(a.date)}) na ${value}.`,
+    );
   }
 
   function handleToggleBreak(index: number) {
+    const target = assignments[index];
+    const employee = employees.find((e) => e.id === target.employeeId);
+    const addingBreak = (target.shift.breakMinutes ?? 0) === 0;
     const next = assignments.map((a, i) => {
       if (i !== index) return a;
       const duration = hoursBetween(a.shift.start, a.shift.end);
@@ -395,10 +465,17 @@ function AppContent() {
       };
     });
     setAssignments(next);
+    appendHistory(
+      key,
+      `${addingBreak ? "Přidána" : "Odebrána"} pauza na oběd u směny (${employee?.name ?? "?"}, ${formatHistoryDay(target.date)}).`,
+    );
   }
 
   function handleRemoveAssignment(index: number) {
+    const target = assignments[index];
+    const employee = employees.find((e) => e.id === target.employeeId);
     setAssignments(assignments.filter((_, i) => i !== index));
+    appendHistory(key, `Odebrána směna: ${employee?.name ?? "?"}, ${formatHistoryDay(target.date)}.`);
   }
 
   function handleWarningClick(date: string) {
@@ -412,7 +489,12 @@ function AppContent() {
     employeeId: string,
     shift: ShiftDefinition,
   ) {
+    const employee = employees.find((e) => e.id === employeeId);
     setAssignments([...assignments, { date, employeeId, shift }]);
+    appendHistory(
+      key,
+      `Přidána směna: ${employee?.name ?? "?"}, ${formatHistoryDay(date)} (${SHIFT_KIND_LABELS[shift.kind]}).`,
+    );
   }
 
   function changeMonth(delta: number) {
@@ -538,6 +620,9 @@ function AppContent() {
         </aside>
 
         <main className="main-content" style={sidebarHeight ? { height: sidebarHeight } : undefined}>
+          <div className="history-overlay">
+            <HistoryPanel entries={monthHistory} hasUnseen={hasUnseenHistory} onOpen={handleOpenHistory} />
+          </div>
           <SpaceScene
             workingEmployees={workingEmployees}
             employees={employees}
