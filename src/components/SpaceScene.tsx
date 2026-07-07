@@ -66,7 +66,6 @@ export function SpaceScene({
         {workingEmployees.map((emp, i) => {
           const size = 110 + i * 62;
           const duration = 9 + i * 6;
-          const reverse = i % 2 === 1;
           return (
             <div
               key={emp.id}
@@ -75,7 +74,6 @@ export function SpaceScene({
                 width: size,
                 height: size,
                 animationDuration: `${duration}s`,
-                animationDirection: reverse ? "reverse" : "normal",
               }}
             >
               <div

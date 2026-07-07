@@ -291,9 +291,17 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 10px;
   margin-top: 20px;
+}
+
+.export-bar-left,
+.export-bar-right {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .revert-generate-btn {
@@ -843,8 +851,9 @@ select {
 }
 
 .calendar-cell.today {
-  border-color: var(--gold);
+  border-color: var(--accent);
   border-width: 2px;
+  box-shadow: 0 0 0 2px var(--accent-bg);
 }
 
 .calendar-cell.highlighted {

@@ -335,6 +335,17 @@ function AppContent() {
     appendHistory(key, "Vygenerování rozvrhu bylo vráceno zpět.");
   }
 
+  function handleClearSchedule() {
+    if (assignments.length === 0) return;
+    const confirmed = window.confirm(
+      "Opravdu vyprázdnit celý rozvrh pro tento měsíc? Všechny směny budou odebrány.",
+    );
+    if (!confirmed) return;
+    setPreGenerateSnapshot({ key, assignments });
+    setAssignments([]);
+    appendHistory(key, "Rozvrh byl vyprázdněn.");
+  }
+
   function handleExportPdf() {
     import("./pdfExport")
       .then(({ exportScheduleToPdf }) =>
@@ -650,69 +661,73 @@ function AppContent() {
         onToggle={handleToggleUnavailable}
       />
 
-      {assignments.length === 0 ? (
-        <section className="panel">
-          <p className="muted">
-            Pro tento měsíc zatím není žádný rozvrh. Klikněte na „Vygenerovat
-            rozvrh“.
-          </p>
-        </section>
-      ) : (
-        <CalendarGrid
-          year={year}
-          month={month}
-          employees={employees}
-          assignments={assignments}
-          onUpdateAssignmentEmployee={handleUpdateAssignmentEmployee}
-          onUpdateAssignmentKind={handleUpdateAssignmentKind}
-          onUpdateAssignmentTime={handleUpdateAssignmentTime}
-          onToggleBreak={handleToggleBreak}
-          onRemoveAssignment={handleRemoveAssignment}
-          onAddAssignment={handleAddAssignment}
-          highlightedDate={highlightedDate}
-        />
-      )}
+      <CalendarGrid
+        year={year}
+        month={month}
+        employees={employees}
+        assignments={assignments}
+        onUpdateAssignmentEmployee={handleUpdateAssignmentEmployee}
+        onUpdateAssignmentKind={handleUpdateAssignmentKind}
+        onUpdateAssignmentTime={handleUpdateAssignmentTime}
+        onToggleBreak={handleToggleBreak}
+        onRemoveAssignment={handleRemoveAssignment}
+        onAddAssignment={handleAddAssignment}
+        highlightedDate={highlightedDate}
+      />
 
       <div className="export-bar">
-        {preGenerateSnapshot?.key === key && (
-          <button
-            type="button"
-            className="secondary-btn revert-generate-btn"
-            onClick={handleRevertGenerate}
-          >
-            Vrátit předchozí rozvrh
-          </button>
-        )}
-        <button
-          type="button"
-          className="secondary-btn"
-          onClick={handleExportPdf}
-          disabled={assignments.length === 0}
-        >
-          Stáhnout PDF
-        </button>
-        <span className="ics-export">
-          <select
-            value={icsEmployeeId}
-            onChange={(e) => setIcsEmployeeId(e.target.value)}
-            aria-label="Pro koho stáhnout kalendář"
-          >
-            <option value="all">Všichni</option>
-            {employees.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.name}
-              </option>
-            ))}
-          </select>
+        <div className="export-bar-left">
+          {preGenerateSnapshot?.key === key && (
+            <button
+              type="button"
+              className="secondary-btn revert-generate-btn"
+              onClick={handleRevertGenerate}
+            >
+              Vrátit předchozí rozvrh
+            </button>
+          )}
+          {assignments.length > 0 && (
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={handleClearSchedule}
+            >
+              Vyprázdnit rozvrh
+            </button>
+          )}
+        </div>
+        <div className="export-bar-right">
           <button
             type="button"
             className="secondary-btn"
-            onClick={handleExportIcs}
+            onClick={handleExportPdf}
             disabled={assignments.length === 0}
           >
-            Stáhnout kalendář
+            Stáhnout PDF
           </button>
-        </span>
+          <span className="ics-export">
+            <select
+              value={icsEmployeeId}
+              onChange={(e) => setIcsEmployeeId(e.target.value)}
+              aria-label="Pro koho stáhnout kalendář"
+            >
+              <option value="all">Všichni</option>
+              {employees.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={handleExportIcs}
+              disabled={assignments.length === 0}
+            >
+              Stáhnout kalendář
+            </button>
+          </span>
+        </div>
       </div>
 
       <footer className="app-footer">
