@@ -351,29 +351,15 @@
 
 .app-layout {
   display: grid;
-  grid-template-columns: 320px 1fr 320px;
+  grid-template-columns: 1fr 320px;
   gap: 20px;
   align-items: start;
   margin-bottom: 20px;
 }
 
-@media (max-width: 1200px) {
-  .app-layout {
-    grid-template-columns: 320px 1fr;
-  }
-
-  .warnings-column {
-    grid-column: 1 / -1;
-  }
-}
-
 @media (max-width: 900px) {
   .app-layout {
     grid-template-columns: 1fr;
-  }
-
-  .warnings-column {
-    grid-column: auto;
   }
 }
 
@@ -383,30 +369,12 @@
   min-width: 0;
 }
 
-
 .warnings-column .panel {
   box-sizing: border-box;
 }
 
-@media (max-width: 1200px) {
-  .warnings-column .panel {
-    min-height: auto !important;
-  }
-
-  .main-content {
-    height: auto !important;
-  }
-}
-
 .availability-panel {
   margin-bottom: 20px;
-}
-
-.sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  min-width: 0;
 }
 
 .main-content {
@@ -757,23 +725,42 @@ select {
   opacity: 0.75;
 }
 
-/* Hours summary */
-.hours-table {
+/* Settings (collapsed employee management etc.) */
+.settings-panel {
+  margin-top: 20px;
+}
+
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.hours-table th,
-.hours-table td {
-  text-align: left;
-  padding: 6px 4px;
-  border-bottom: 1px solid var(--border);
-}
-
-.over-limit {
-  color: var(--danger-text);
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-family: var(--heading);
+  font-size: 15px;
   font-weight: 600;
+  color: var(--text-h);
+}
+
+.settings-toggle-icon {
+  transition: transform 0.15s ease;
+}
+
+.settings-toggle-icon.open {
+  transform: rotate(180deg);
+}
+
+.settings-content {
+  margin-top: 14px;
+}
+
+.settings-content .panel {
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
 }
 
 /* Calendar (schedule table) */

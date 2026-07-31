@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type {
   Assignment,
   AvailabilityKind,
@@ -7,12 +7,7 @@ import type {
   UnavailabilityMap,
 } from "./types";
 import { HOLIDAY_SHIFT, SHIFTS, WEEKEND_SHIFT } from "./types";
-import {
-  computeWarnings,
-  generateSchedule,
-  toISODate,
-  totalHoursByEmployee,
-} from "./scheduler";
+import { computeWarnings, generateSchedule, toISODate } from "./scheduler";
 import { employeeColor } from "./colors";
 import type { DismissedWarningsMap, HistoryMap, HistorySeenMap, SchedulesMap, Theme } from "./storage";
 import {
@@ -40,11 +35,11 @@ import { supabase } from "./supabaseClient";
 import { LoginGate } from "./components/LoginGate";
 import { EmployeeManager } from "./components/EmployeeManager";
 import { WarningsPanel } from "./components/WarningsPanel";
-import { HoursSummary } from "./components/HoursSummary";
 import { CalendarGrid } from "./components/CalendarGrid";
 import { AvailabilityGrid } from "./components/AvailabilityGrid";
 import { SpaceScene } from "./components/SpaceScene";
 import { HistoryPanel } from "./components/HistoryPanel";
+import { SettingsPanel } from "./components/SettingsPanel";
 import "./App.css";
 
 const SHIFT_KIND_LABELS: Record<ShiftDefinition["kind"], string> = {
@@ -104,24 +99,6 @@ function AppContent() {
   const [preGenerateSnapshot, setPreGenerateSnapshot] = useState<{ key: string; assignments: Assignment[] } | null>(
     null,
   );
-  const sidebarRef = useRef<HTMLDivElement>(null);
-  const [sidebarHeight, setSidebarHeight] = useState<number | undefined>(undefined);
-
-  // The sidebar (employees + hours-per-month) is the reference height on desktop: the space
-  // scene should end exactly where it does, and the warnings panel should be at least that tall
-  // too - but only as a floor, since a long warnings list shouldn't stretch the sidebar or space
-  // scene along with it. A plain CSS stretch can't express "match, but only one-way", so this
-  // measures the sidebar's actual rendered height and applies it directly.
-  useEffect(() => {
-    if (!sidebarRef.current) return;
-    const el = sidebarRef.current;
-    const observer = new ResizeObserver((entries) => {
-      setSidebarHeight(entries[0]?.contentRect.height);
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [loaded]);
-
   // One-time load from the shared cloud storage on login. If the cloud is still empty but this
   // browser has real data from before the switch to cloud storage, offer to upload it instead of
   // silently starting from an empty state.
@@ -269,11 +246,6 @@ function AppContent() {
       return { ...prev, [key]: current.filter((m) => m !== message) };
     });
   }
-  const hoursByEmployee = useMemo(
-    () => totalHoursByEmployee(assignments, employees),
-    [assignments, employees],
-  );
-
   const workingEmployees = useMemo(() => {
     const now = new Date();
     const todayKey = monthKey(now.getFullYear(), now.getMonth());
@@ -557,15 +529,7 @@ function AppContent() {
       </header>
 
       <div className="app-layout">
-        <aside className="sidebar" ref={sidebarRef}>
-          <EmployeeManager employees={employees} onChange={setEmployees} />
-          <HoursSummary
-            employees={employees}
-            hoursByEmployee={hoursByEmployee}
-          />
-        </aside>
-
-        <main className="main-content" style={sidebarHeight ? { height: sidebarHeight } : undefined}>
+        <main className="main-content">
           <div className="history-overlay">
             <HistoryPanel entries={monthHistory} hasUnseen={hasUnseenHistory} onOpen={handleOpenHistory} />
           </div>
@@ -580,7 +544,6 @@ function AppContent() {
           <WarningsPanel
             warnings={warnings}
             onWarningClick={handleWarningClick}
-            minHeight={sidebarHeight}
             onDismiss={handleDismissWarning}
             dismissedWarnings={dismissedWarningObjects}
             onRestore={handleRestoreWarning}
@@ -659,6 +622,10 @@ function AppContent() {
           </span>
         </div>
       </div>
+
+      <SettingsPanel>
+        <EmployeeManager employees={employees} onChange={setEmployees} />
+      </SettingsPanel>
 
       <footer className="app-footer">
         <span className="theme-toggle-label">
