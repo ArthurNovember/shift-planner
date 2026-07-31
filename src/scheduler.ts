@@ -5,6 +5,7 @@ import {
   FULLTIME_HOURS_TOLERANCE,
   FULLTIME_TARGET_HOURS,
   HOLIDAY_SHIFT,
+  MAX_CONSECUTIVE_SHIFTS,
   PARTTIME_MONTHLY_CAP,
   SHIFTS,
   WEEKEND_SHIFT,
@@ -457,11 +458,19 @@ export function generateSchedule(
       const available = weekdays.filter((d) => !isUnavailable(emp.id, toISODate(d)));
       const target = ftWeekTargets.get(emp.id)!.get(weekKey) ?? 0;
       const offCount = Math.max(0, available.length - target);
-      // even index: trim off days from the end (Friday side); odd index: from the start (Monday side)
+      // The week this employee covers the weekend right after it always trims from the Friday
+      // side, no matter their usual alternating preference - that's the only day(s) off they get
+      // anywhere near a weekend to begin with (every other week normally has none at all, having
+      // been sized to their monthly target), so it needs to land immediately before the weekend
+      // to give any real break at all. Landing it on the Monday side instead (their normal
+      // odd-index preference) would leave them working straight through the weekend into the next
+      // full week with no break whatsoever. Any other week keeps the even/odd alternation, which
+      // is what keeps two fulltimers' days off from ever coinciding.
+      const trimFromEnd = isShortWeek(emp.id, weekKey) || empIndex % 2 === 0;
       const kept =
         offCount === 0
           ? available
-          : empIndex % 2 === 0
+          : trimFromEnd
             ? available.slice(0, available.length - offCount)
             : available.slice(offCount);
       const set = ftWorkingDates.get(emp.id)!;
@@ -605,7 +614,18 @@ export function generateSchedule(
       return true;
     });
     if (eligible.length === 0) return false;
-    const chosen = eligible.sort((a, b) => (ptHours.get(a.id) ?? 0) - (ptHours.get(b.id) ?? 0))[0];
+    // Among whoever can actually take it, prefer someone it wouldn't run into a long streak for -
+    // this is still choosing among people who satisfy every real rule above, so covering the gap
+    // itself is never in question, only who ends up covering it. Falls back to the normal
+    // fewest-hours-so-far fairness tie-break, both among streak-safe candidates and (if nobody
+    // is streak-safe) among everyone eligible.
+    const dayOfMonth = Number(date.split('-')[2]);
+    const chosen = eligible.sort((a, b) => {
+      const aExtends = wouldExtendStreakTooFar(a.id, dayOfMonth) ? 1 : 0;
+      const bExtends = wouldExtendStreakTooFar(b.id, dayOfMonth) ? 1 : 0;
+      if (aExtends !== bExtends) return aExtends - bExtends;
+      return (ptHours.get(a.id) ?? 0) - (ptHours.get(b.id) ?? 0);
+    })[0];
     assignments.push({ date, employeeId: chosen.id, shift: SHIFTS.parttime[kind] });
     ptTakenSlots.add(slotKey);
     ptHours.set(chosen.id, (ptHours.get(chosen.id) ?? 0) + shiftHours);
@@ -670,6 +690,24 @@ export function generateSchedule(
   // intentional; there just aren't enough weekdays in a month to keep every support shift
   // exclusive to one person and still get both close to their target. "Long/short week" opts out -
   // it already worked backward from the cap on its own terms, week by week.
+  // Whether giving `employeeId` a worked day on day-of-month `day` (any kind - re-read fresh from
+  // the real assignments so far, not a running tally that could drift) would push their run of
+  // consecutive worked days past the soft streak target. Only meant for guarding *discretionary*
+  // extra shifts like the top-up below, never a real gap - covering an actual need matters more
+  // than this, but topping up a part-timer's hours a bit further than the cap already requires is
+  // exactly the kind of "not actually necessary" day this should decline to add.
+  function wouldExtendStreakTooFar(employeeId: string, day: number): boolean {
+    const workedDays = new Set(
+      assignments.filter((a) => a.employeeId === employeeId).map((a) => Number(a.date.split('-')[2])),
+    );
+    workedDays.add(day);
+    let start = day;
+    while (start > 1 && workedDays.has(start - 1)) start--;
+    let end = day;
+    while (end < totalDays && workedDays.has(end + 1)) end++;
+    return end - start + 1 > MAX_CONSECUTIVE_SHIFTS;
+  }
+
   if (parttime.length > 0 && !ptLongShortWeek) {
     const allWeekdays: Date[] = [];
     orderedWeekKeys.forEach((wk) => allWeekdays.push(...weekdaysByWeekKey.get(wk)!));
@@ -681,6 +719,7 @@ export function generateSchedule(
         if ((ptHours.get(emp.id) ?? 0) + shiftHours > cap) break;
         const iso = toISODate(day);
         if (isUnavailableForKind(emp.id, iso, 'morning') || ptDatesWorked.get(emp.id)!.has(iso)) continue;
+        if (wouldExtendStreakTooFar(emp.id, day.getDate())) continue;
         assignments.push({ date: iso, employeeId: emp.id, shift: SHIFTS.parttime.morning });
         ptHours.set(emp.id, (ptHours.get(emp.id) ?? 0) + shiftHours);
         ptDatesWorked.get(emp.id)!.add(iso);
@@ -720,6 +759,126 @@ export function generateSchedule(
         if ((ptHours.get(emp.id) ?? 0) + added > effectivePtCap(emp.id)) continue;
         assignments[idx] = { ...current, shift: longShift };
         ptHours.set(emp.id, (ptHours.get(emp.id) ?? 0) + added);
+      }
+    });
+  }
+
+  // --- Soft pass: nudge away from long stretches of consecutive worked days (any shift kind
+  //     counts, including weekend/holiday). Deliberately the very last thing this function does
+  //     and deliberately soft - it only ever hands a single weekday shift to a same-type coworker,
+  //     and only when that coworker is free that day, actually available for it, within their own
+  //     monthly cap/tolerance, respects their "long/short week" role if that mode is on, and
+  //     wouldn't just end up with a long streak of their own from taking it. If no such coworker
+  //     exists anywhere in the run, the streak is left alone - every rule already applied above
+  //     matters more than this one. Weekend pairs and the single holiday shift are never moved
+  //     (only a morning/afternoon weekday assignment can be the one that's handed off): an
+  //     always-together weekend and a fairness-tracked once-a-month holiday turn are both rules
+  //     that matter more than smoothing out a streak. Only looks within this calendar month - there
+  //     is no record here of exactly which of last month's final days someone worked, so a streak
+  //     that started before day 1 can't be detected or fixed. ---
+  softenConsecutiveStreaks();
+
+  function softenConsecutiveStreaks(): void {
+    if (employees.length < 2) return;
+
+    function buildWorkedDays(): Map<string, boolean[]> {
+      const worked = new Map<string, boolean[]>();
+      employees.forEach((e) => worked.set(e.id, new Array(totalDays + 1).fill(false)));
+      assignments.forEach((a) => {
+        const days = worked.get(a.employeeId);
+        if (days) days[Number(a.date.split('-')[2])] = true;
+      });
+      return worked;
+    }
+
+    function runBounds(days: boolean[], day: number): [number, number] {
+      let start = day;
+      while (start > 1 && days[start - 1]) start--;
+      let end = day;
+      while (end < totalDays && days[end + 1]) end++;
+      return [start, end];
+    }
+
+    function longestRun(days: boolean[]): [number, number] | null {
+      let best: [number, number] | null = null;
+      let day = 1;
+      while (day <= totalDays) {
+        if (!days[day]) {
+          day++;
+          continue;
+        }
+        const [start, end] = runBounds(days, day);
+        if (!best || end - start > best[1] - best[0]) best = [start, end];
+        day = end + 1;
+      }
+      return best;
+    }
+
+    function employeeHours(empId: string): number {
+      return assignments.filter((a) => a.employeeId === empId).reduce((sum, a) => sum + a.shift.hours, 0);
+    }
+
+    // Tries to move `emp`'s weekday shift on `day` to whichever eligible same-type coworker in
+    // `candidates` is checked first (their existing round-robin order in `employees`) - returns
+    // whether a coworker was actually found and the swap made.
+    function trySwapDay(emp: Employee, day: number, candidates: Employee[], worked: Map<string, boolean[]>): boolean {
+      const iso = toISODate(new Date(year, month, day));
+      const index = assignments.findIndex(
+        (a) => a.employeeId === emp.id && a.date === iso && (a.shift.kind === 'morning' || a.shift.kind === 'afternoon'),
+      );
+      if (index === -1) return false;
+      const kind = assignments[index].shift.kind as 'morning' | 'afternoon';
+
+      for (const candidate of candidates) {
+        const candidateDays = worked.get(candidate.id)!;
+        if (candidateDays[day]) continue; // already working that date
+        if (isUnavailableForKind(candidate.id, iso, kind)) continue;
+        if (candidate.type === 'parttime' && !ptRoleAllowsDay(candidate.id, iso)) continue;
+
+        const newShift = SHIFTS[candidate.type][kind];
+        const projected = employeeHours(candidate.id) + newShift.hours;
+        if (candidate.type === 'parttime' && projected > effectivePtCap(candidate.id)) continue;
+        if (candidate.type === 'fulltime' && projected > effectiveFulltimeTarget(candidate.id) + FULLTIME_HOURS_TOLERANCE) continue;
+
+        // Don't just hand the streak to someone who'd immediately have one of their own.
+        candidateDays[day] = true;
+        const [cStart, cEnd] = runBounds(candidateDays, day);
+        candidateDays[day] = false;
+        if (cEnd - cStart + 1 > MAX_CONSECUTIVE_SHIFTS) continue;
+
+        assignments[index] = { date: iso, employeeId: candidate.id, shift: newShift };
+        return true;
+      }
+      return false;
+    }
+
+    employees.forEach((emp) => {
+      const sameType = employees.filter((e) => e.id !== emp.id && e.type === emp.type);
+      if (sameType.length === 0) return;
+
+      // Each successful swap only ever shortens this employee's runs, never lengthens one, so a
+      // bounded number of passes is enough - one swap per remaining over-threshold run, worst case.
+      for (let guard = 0; guard < totalDays; guard++) {
+        const worked = buildWorkedDays();
+        const run = longestRun(worked.get(emp.id)!);
+        if (!run || run[1] - run[0] + 1 <= MAX_CONSECUTIVE_SHIFTS) break;
+        const [start, end] = run;
+        const middle = Math.floor((start + end) / 2);
+
+        // Try days outward from the middle, so a successful fix roughly bisects the run into two
+        // shorter pieces instead of just shaving one end of it.
+        let fixed = false;
+        for (let offset = 0; offset <= end - start && !fixed; offset++) {
+          const candidateDays = offset === 0 ? [middle] : [middle - offset, middle + offset];
+          for (const day of candidateDays) {
+            if (day < start || day > end) continue;
+            if (trySwapDay(emp, day, sameType, worked)) {
+              fixed = true;
+              break;
+            }
+          }
+        }
+        if (!fixed) break; // nobody in the team could take any day in this run - leave it as-is
       }
     });
   }

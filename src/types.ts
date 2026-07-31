@@ -95,6 +95,13 @@ export const FT_SHORT_WEEK_REDUCTION = 2;
  * gap for part-time to cover, same as any other short-week gap. */
 export const FT_TOGETHER_CHANCE = 0.1;
 
+/** Soft target for how many calendar days in a row (any shift kind) someone should work at
+ * most - a schedule that's otherwise fine but runs someone 8-10 days straight isn't a good
+ * schedule. Lower priority than every other rule: the generator only tries to fix a longer
+ * streak by handing one day to a same-type coworker when that's possible without breaking
+ * anything else, and simply leaves it alone otherwise. */
+export const MAX_CONSECUTIVE_SHIFTS = 6;
+
 /** Which weekday shift kind(s) an employee is marked unavailable for on a given date. Weekends
  * have no morning/afternoon split (one shift covers the whole day), so a weekend day off is
  * represented the same way as a full weekday off: both kinds marked. */
