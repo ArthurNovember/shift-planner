@@ -776,233 +776,185 @@ select {
   font-weight: 600;
 }
 
-/* Calendar */
+/* Calendar (schedule table) */
 .calendar-panel {
-  padding: 10px;
+  padding: 14px 18px;
 }
 
-.calendar-grid {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 6px;
+.schedule-scroll {
+  overflow-x: auto;
+  margin-top: 10px;
 }
 
-/* Each week is its own grid (so the header stays aligned to the same 7 columns), stacked with
-   enough of a gap and a divider line between them that weeks read as distinct rows instead of
-   one long undifferentiated block of cells. */
-.calendar-weeks {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.calendar-week:not(:first-child) {
-  border-top: 1px solid var(--border);
-  padding-top: 18px;
-}
-
-.calendar-header-cell {
-  text-align: center;
-  font-family: var(--heading);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  color: var(--accent-text);
-  padding: 4px 0;
-}
-
-.calendar-cell {
-  min-height: 130px;
-  min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  background: var(--cell-bg);
-  overflow: hidden;
-  transition:
-    box-shadow 0.4s ease,
-    border-color 0.4s ease;
-}
-
-.calendar-cell.empty {
-  border: 1px dashed var(--border);
-  background: var(--cell-bg-empty);
-}
-
-.calendar-cell.weekend {
-  background: rgba(23, 182, 245, 0.1);
-  border-color: var(--accent-border);
-}
-
-.calendar-cell.holiday {
-  background: rgba(217, 164, 65, 0.14);
-  border-color: var(--gold);
-}
-
-.calendar-cell-holiday-name {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--gold-text);
-  line-height: 1.2;
-}
-
-.calendar-cell.today {
-  border-color: var(--accent);
-  border-width: 2px;
-  box-shadow: 0 0 0 2px var(--accent-bg);
-}
-
-.calendar-cell.highlighted {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-bg);
-}
-
-.calendar-cell-date {
-  font-family: var(--heading);
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text-h);
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-}
-
-.calendar-cell-weekday {
-  display: none;
-  font-family: var(--sans);
+.schedule-table {
+  border-collapse: collapse;
   font-size: 13px;
-  font-weight: 600;
+}
+
+.schedule-table th,
+.schedule-table td {
+  border: 1px solid var(--border);
+  padding: 0;
+  text-align: center;
+  min-width: 32px;
+}
+
+.schedule-corner {
+  border: none !important;
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: var(--bg);
+}
+
+.schedule-day-header {
+  padding: 5px 2px !important;
+  font-family: var(--heading);
+  color: var(--text-h);
+  white-space: nowrap;
+  border-left: 2px solid var(--divider-strong) !important;
+}
+
+.schedule-day-weekday {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
   letter-spacing: 0.4px;
   text-transform: uppercase;
   color: var(--accent-text);
 }
 
-.calendar-cell-shifts {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  flex: 1;
+.schedule-day-number {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
 }
 
-.shift-block {
-  border-left: 4px solid;
-  border-radius: 6px;
-  padding: 4px 6px;
-  background: rgba(23, 182, 245, 0.07);
-  font-size: 11px;
+.schedule-subheader {
+  padding: 3px 2px !important;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent-text);
+  background: var(--bg-raised);
 }
 
-.shift-time-row {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  margin-bottom: 3px;
-  flex-wrap: wrap;
+/* Marks the first sub-column of each day (the whole cell for weekend/holiday, "R" for a split
+   weekday) with a stronger left border, so consecutive days read as distinct columns instead of
+   the R/O split within one day blurring together with the boundary to the next day. */
+.schedule-subheader.day-start,
+.schedule-table td.day-start {
+  border-left: 2px solid var(--divider-strong) !important;
 }
 
-.shift-kind-label {
+.schedule-day-header.weekend,
+.schedule-table td.weekend {
+  background: rgba(23, 182, 245, 0.1);
+}
+
+.schedule-day-header.holiday,
+.schedule-table td.holiday {
+  background: rgba(217, 164, 65, 0.14);
+}
+
+.schedule-day-header.today,
+.schedule-subheader.today {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.schedule-table td.today {
+  box-shadow: inset 0 0 0 2px var(--accent-border);
+}
+
+.schedule-day-header.highlighted,
+.schedule-subheader.highlighted,
+.schedule-table td.highlighted {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.schedule-employee-name {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--bg);
+  text-align: left !important;
+  padding: 8px 14px !important;
+  font-weight: 700;
+  color: var(--text-h);
+  white-space: nowrap;
+}
+
+.schedule-total-header,
+.schedule-total-cell {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  background: var(--bg);
+  border-left: 2px solid var(--accent-border) !important;
+  white-space: nowrap;
+}
+
+.schedule-total-header {
+  padding: 5px 12px !important;
+  font-family: var(--heading);
   font-weight: 600;
   color: var(--text-h);
-  margin-right: 2px;
 }
 
-.shift-kind-select {
-  font-weight: 600;
+.schedule-total-cell {
+  padding: 4px 12px !important;
+}
+
+.schedule-total-value {
   color: var(--text-h);
-  margin-right: 2px;
-  font-size: 11px;
-  padding: 1px 2px;
+  font-weight: 700;
+  font-size: 14px;
 }
 
-.shift-time-input {
-  font-size: 11px;
-  padding: 1px 2px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
+.schedule-cell {
+  display: block;
+  width: 100%;
+  height: 38px;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.schedule-cell:hover {
+  background: rgba(23, 182, 245, 0.14);
+}
+
+.schedule-cell.filled {
+  color: var(--text-h);
+  font-weight: 700;
+}
+
+/* A filled afternoon shift gets a background tint so it stands out from a morning one at a
+   glance, now that the R/O column label is the only other thing telling them apart. */
+.schedule-cell.filled.afternoon {
+  background: var(--afternoon-fill);
+  color: #ffffff;
+}
+
+.schedule-cell-input {
+  width: 100%;
+  height: 38px;
+  box-sizing: border-box;
+  border: 2px solid var(--accent);
+  border-radius: 0;
   background: var(--input-bg);
   color: var(--text-h);
-  width: 68px;
-}
-
-.shift-hours-label {
-  color: var(--text);
-  margin-left: auto;
-}
-
-.break-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 2px 6px;
-  font-size: 10px;
-  color: var(--text);
-  cursor: pointer;
-  align-self: flex-start;
-  transition:
-    background 0.15s ease,
-    border-color 0.15s ease,
-    color 0.15s ease;
-}
-
-.break-toggle input[type="checkbox"] {
-  width: 11px;
-  height: 11px;
-  margin: 0;
-  cursor: pointer;
-  accent-color: var(--accent);
-}
-
-.break-toggle.checked {
-  color: var(--text-h);
-}
-
-.break-toggle:hover {
-  border-color: var(--accent-border);
-}
-
-.shift-employee-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.shift-employee-row select {
-  flex: 1;
-  min-width: 0;
-  font-size: 11px;
-  padding: 2px 4px;
-}
-
-.shift-employee-row .icon-btn {
-  width: 18px;
-  height: 18px;
-  font-size: 12px;
-}
-
-.add-shift-row {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-}
-
-.add-shift-row select {
-  flex: 1;
-  min-width: 0;
-  font-size: 11px;
-  padding: 2px 4px;
-}
-
-.add-shift-row .icon-btn {
-  width: 20px;
-  height: 20px;
+  font-weight: 700;
   font-size: 13px;
+  text-align: center;
+  padding: 0;
+}
+
+.schedule-cell-input:focus {
+  outline: none;
 }
 
 /* Availability grid */

@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { Assignment, Employee, ShiftDefinition } from '../types';
-import { daysInMonth, hoursBetween, shiftOptionsFor, toISODate } from '../scheduler';
-import { employeeColor } from '../colors';
+import { HOLIDAY_SHIFT, SHIFTS, WEEKEND_SHIFT } from '../types';
+import { daysInMonth, toISODate } from '../scheduler';
 import { getCzechHolidays } from '../holidays';
 
 interface Props {
@@ -9,12 +9,7 @@ interface Props {
   month: number;
   employees: Employee[];
   assignments: Assignment[];
-  onUpdateAssignmentEmployee: (index: number, newEmployeeId: string) => void;
-  onUpdateAssignmentKind: (index: number, kind: 'morning' | 'afternoon') => void;
-  onUpdateAssignmentTime: (index: number, field: 'start' | 'end', value: string) => void;
-  onToggleBreak: (index: number) => void;
-  onRemoveAssignment: (index: number) => void;
-  onAddAssignment: (date: string, employeeId: string, shift: ShiftDefinition) => void;
+  onSetShiftHours: (date: string, employeeId: string, kind: ShiftDefinition['kind'], hours: number) => void;
   highlightedDate?: string | null;
 }
 
@@ -25,218 +20,214 @@ const SHIFT_LABELS: Record<ShiftDefinition['kind'], string> = {
   weekend: 'Víkendová',
   holiday: 'Svátek',
 };
+const SUBCOL_LABELS: Record<'morning' | 'afternoon', string> = { morning: 'R', afternoon: 'O' };
 
-function AddShiftRow({
-  employees,
-  isWeekend,
-  isHoliday,
-  onAdd,
-}: {
-  employees: Employee[];
+interface DayInfo {
+  date: Date;
+  iso: string;
+  dow: number;
   isWeekend: boolean;
   isHoliday: boolean;
-  onAdd: (employeeId: string, shift: ShiftDefinition) => void;
-}) {
-  const [employeeId, setEmployeeId] = useState(employees[0]?.id ?? '');
-  const employee = employees.find((e) => e.id === employeeId) ?? employees[0];
-  const options = employee ? shiftOptionsFor(employee, isWeekend, isHoliday) : [];
-  const [shiftKind, setShiftKind] = useState(options[0]?.kind ?? 'morning');
-
-  if (!employee) return null;
-  const currentOptions = shiftOptionsFor(employee, isWeekend, isHoliday);
-  const selectedShift = currentOptions.find((s) => s.kind === shiftKind) ?? currentOptions[0];
-
-  return (
-    <div className="add-shift-row">
-      <select
-        value={employeeId}
-        onChange={(e) => setEmployeeId(e.target.value)}
-        aria-label="Vybrat zaměstnance"
-      >
-        {employees.map((e) => (
-          <option key={e.id} value={e.id}>
-            {e.name}
-          </option>
-        ))}
-      </select>
-      {currentOptions.length > 1 && (
-        <select value={shiftKind} onChange={(e) => setShiftKind(e.target.value as ShiftDefinition['kind'])}>
-          {currentOptions.map((s) => (
-            <option key={s.kind} value={s.kind}>
-              {SHIFT_LABELS[s.kind]}
-            </option>
-          ))}
-        </select>
-      )}
-      <button
-        type="button"
-        className="icon-btn"
-        title="Přidat směnu"
-        onClick={() => selectedShift && onAdd(employee.id, selectedShift)}
-      >
-        +
-      </button>
-    </div>
-  );
+  holidayName?: string;
 }
 
-export function CalendarGrid({
-  year,
-  month,
-  employees,
-  assignments,
-  onUpdateAssignmentEmployee,
-  onUpdateAssignmentKind,
-  onUpdateAssignmentTime,
-  onToggleBreak,
-  onRemoveAssignment,
-  onAddAssignment,
-  highlightedDate,
-}: Props) {
-  const totalDays = daysInMonth(year, month);
-  const firstDow = (new Date(year, month, 1).getDay() + 6) % 7; // Monday = 0
-  const todayIso = toISODate(new Date());
-  const holidays = getCzechHolidays(year);
+function dayInfo(year: number, month: number, day: number, holidays: Map<string, string>): DayInfo {
+  const date = new Date(year, month, day);
+  const iso = toISODate(date);
+  const dow = date.getDay();
+  const isWeekend = dow === 0 || dow === 6;
+  const holidayName = holidays.get(iso);
+  const isHoliday = !isWeekend && !!holidayName;
+  return { date, iso, dow, isWeekend, isHoliday, holidayName };
+}
 
-  const cells: (number | null)[] = [];
-  for (let i = 0; i < firstDow; i++) cells.push(null);
-  for (let d = 1; d <= totalDays; d++) cells.push(d);
-  while (cells.length % 7 !== 0) cells.push(null);
+/** The shift kind(s) a day's column is split into: a plain weekday has a separate morning and
+ * afternoon slot, while weekend/holiday days only ever have one whole-day shift. */
+function kindsFor(info: DayInfo): ShiftDefinition['kind'][] {
+  if (info.isWeekend) return ['weekend'];
+  if (info.isHoliday) return ['holiday'];
+  return ['morning', 'afternoon'];
+}
 
-  // Grouped into whole weeks (7 cells each) so every week can be its own grid row-group with a
-  // clear divider between it and the next - a single flat 7-column grid has no way to visually
-  // set weeks apart from one another, since every row boundary already IS a week boundary and
-  // there's nothing tighter to contrast it against.
-  const weeks: (number | null)[][] = [];
-  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+function shiftForKind(employee: Employee, kind: ShiftDefinition['kind']): ShiftDefinition {
+  if (kind === 'weekend') return WEEKEND_SHIFT;
+  if (kind === 'holiday') return HOLIDAY_SHIFT;
+  return SHIFTS[employee.type][kind];
+}
 
-  const indexed = assignments.map((a, i) => ({ a, i }));
+function formatHours(hours: number): string {
+  return hours.toFixed(1).replace('.', ',');
+}
 
-  function renderCell(day: number | null, idx: number) {
-    if (day === null) return <div key={idx} className="calendar-cell empty" />;
-    const date = new Date(year, month, day);
-    const iso = toISODate(date);
-    const dow = date.getDay();
-    const isWeekend = dow === 0 || dow === 6;
-    const dayItems = indexed
-      .filter((x) => x.a.date === iso)
-      .sort((x, y) => x.a.shift.start.localeCompare(y.a.shift.start));
+interface HourInputProps {
+  initialHours: number;
+  onCommit: (hours: number) => void;
+  onCancel: () => void;
+}
 
-    const isToday = iso === todayIso;
-    const isHighlighted = iso === highlightedDate;
-    const holidayName = holidays.get(iso);
-    const isHoliday = !isWeekend && !!holidayName;
+/** The whole editing UI for a cell: click a shift, type how many hours, done - no separate
+ * popover, no time pickers. Committing happens on blur (including a blur triggered by Enter);
+ * Escape cancels instead by flagging the blur that follows it to skip the commit. */
+function HourInput({ initialHours, onCommit, onCancel }: HourInputProps) {
+  const [value, setValue] = useState(initialHours > 0 ? formatHours(initialHours) : '');
+  const cancelledRef = useRef(false);
 
-    return (
-      <div
-        key={idx}
-        id={`day-${iso}`}
-        className={`calendar-cell${isWeekend ? ' weekend' : ''}${isHoliday ? ' holiday' : ''}${isToday ? ' today' : ''}${isHighlighted ? ' highlighted' : ''}`}
-      >
-        <div className="calendar-cell-date">
-          <span className="calendar-cell-weekday">{WEEKDAY_LABELS[(dow + 6) % 7]}</span>
-          {day}
-        </div>
-        {holidayName && <div className="calendar-cell-holiday-name">{holidayName}</div>}
-        <div className="calendar-cell-shifts">
-          {dayItems.map(({ a, i }) => {
-            const duration = hoursBetween(a.shift.start, a.shift.end);
-            const eligibleForBreak = duration > 6;
-            const hasBreak = (a.shift.breakMinutes ?? 0) > 0;
-            return (
-              <div key={i} className="shift-block" style={{ borderColor: employeeColor(a.employeeId, employees) }}>
-                <div className="shift-time-row">
-                  {a.shift.kind === 'weekend' || a.shift.kind === 'holiday' ? (
-                    <span className="shift-kind-label">{SHIFT_LABELS[a.shift.kind]}</span>
-                  ) : (
-                    <select
-                      className="shift-kind-select"
-                      value={a.shift.kind}
-                      onChange={(e) => onUpdateAssignmentKind(i, e.target.value as 'morning' | 'afternoon')}
-                      aria-label="Typ směny"
-                    >
-                      <option value="morning">Ranní</option>
-                      <option value="afternoon">Odpolední</option>
-                    </select>
-                  )}
-                  <input
-                    type="time"
-                    className="shift-time-input"
-                    value={a.shift.start}
-                    onChange={(e) => onUpdateAssignmentTime(i, 'start', e.target.value)}
-                    aria-label="Začátek směny"
-                  />
-                  <span>–</span>
-                  <input
-                    type="time"
-                    className="shift-time-input"
-                    value={a.shift.end}
-                    onChange={(e) => onUpdateAssignmentTime(i, 'end', e.target.value)}
-                    aria-label="Konec směny"
-                  />
-                  <span className="shift-hours-label">{a.shift.hours.toFixed(1)} h</span>
-                </div>
-                {eligibleForBreak && (
-                  <label
-                    className={`break-toggle${hasBreak ? ' checked' : ''}`}
-                    title={
-                      hasBreak
-                        ? 'Směna delší než 6 h má 30min pauzu na oběd, která se nepočítá do odpracovaných hodin - odškrtnutím ji odeberete.'
-                        : 'Směna delší než 6 h má nárok na 30min pauzu na oběd, která se nepočítá do odpracovaných hodin - zaškrtnutím ji přidáte.'
-                    }
-                  >
-                    <input type="checkbox" checked={hasBreak} onChange={() => onToggleBreak(i)} />
-                    Oběd (30 min)
-                  </label>
-                )}
-                <div className="shift-employee-row">
-                  <select value={a.employeeId} onChange={(e) => onUpdateAssignmentEmployee(i, e.target.value)}>
-                    {employees.map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {e.name}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    title="Odebrat směnu"
-                    onClick={() => onRemoveAssignment(i)}
-                  >
-                    ×
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        {employees.length > 0 && (
-          <AddShiftRow
-            employees={employees}
-            isWeekend={isWeekend}
-            isHoliday={isHoliday}
-            onAdd={(employeeId, shift) => onAddAssignment(iso, employeeId, shift)}
-          />
-        )}
-      </div>
-    );
+  function commit() {
+    const parsed = parseFloat(value.replace(',', '.'));
+    onCommit(Number.isFinite(parsed) ? Math.max(0, parsed) : 0);
   }
 
   return (
+    <input
+      type="text"
+      inputMode="decimal"
+      className="schedule-cell schedule-cell-input"
+      value={value}
+      autoFocus
+      onFocus={(e) => e.target.select()}
+      onChange={(e) => setValue(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          e.currentTarget.blur();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          cancelledRef.current = true;
+          e.currentTarget.blur();
+        }
+      }}
+      onBlur={() => {
+        if (cancelledRef.current) {
+          onCancel();
+          return;
+        }
+        commit();
+      }}
+    />
+  );
+}
+
+export function CalendarGrid({ year, month, employees, assignments, onSetShiftHours, highlightedDate }: Props) {
+  const totalDays = daysInMonth(year, month);
+  const todayIso = toISODate(new Date());
+  const holidays = getCzechHolidays(year);
+  const days = Array.from({ length: totalDays }, (_, i) => i + 1);
+  const dayInfos = days.map((day) => dayInfo(year, month, day, holidays));
+
+  const [editingCell, setEditingCell] = useState<{
+    date: string;
+    employeeId: string;
+    kind: ShiftDefinition['kind'];
+  } | null>(null);
+
+  const hoursByCellKind = new Map<string, number>();
+  assignments.forEach((a) => {
+    const k = `${a.date}|${a.employeeId}|${a.shift.kind}`;
+    hoursByCellKind.set(k, (hoursByCellKind.get(k) ?? 0) + a.shift.hours);
+  });
+
+  const totalHoursByEmployee = new Map<string, number>();
+  assignments.forEach((a) => {
+    totalHoursByEmployee.set(a.employeeId, (totalHoursByEmployee.get(a.employeeId) ?? 0) + a.shift.hours);
+  });
+
+  return (
     <section className="panel calendar-panel">
-      <div className="calendar-grid calendar-grid-header">
-        {WEEKDAY_LABELS.map((label) => (
-          <div key={label} className="calendar-header-cell">
-            {label}
-          </div>
-        ))}
-      </div>
-      <div className="calendar-weeks">
-        {weeks.map((week, weekIdx) => (
-          <div key={weekIdx} className="calendar-grid calendar-week">
-            {week.map((day, dayIdx) => renderCell(day, weekIdx * 7 + dayIdx))}
-          </div>
-        ))}
+      <h2>Rozvrh</h2>
+      <p className="muted">Klikněte na políčko a napište počet odpracovaných hodin (0 nebo prázdné pole směnu odebere).</p>
+      <div className="schedule-scroll">
+        <table className="schedule-table">
+          <thead>
+            <tr>
+              <th className="schedule-corner" rowSpan={2} />
+              {dayInfos.map((info) => {
+                const split = kindsFor(info).length > 1;
+                const isToday = info.iso === todayIso;
+                const isHighlighted = info.iso === highlightedDate;
+                return (
+                  <th
+                    key={info.iso}
+                    id={`day-${info.iso}`}
+                    colSpan={split ? 2 : 1}
+                    rowSpan={split ? 1 : 2}
+                    className={`schedule-day-header${info.isWeekend ? ' weekend' : ''}${info.isHoliday ? ' holiday' : ''}${isToday ? ' today' : ''}${isHighlighted ? ' highlighted' : ''}`}
+                    title={info.holidayName}
+                  >
+                    <span className="schedule-day-weekday">{WEEKDAY_LABELS[(info.dow + 6) % 7]}</span>
+                    <span className="schedule-day-number">{info.date.getDate()}</span>
+                  </th>
+                );
+              })}
+              <th className="schedule-total-header" rowSpan={2}>
+                Celkem
+              </th>
+            </tr>
+            <tr>
+              {dayInfos.flatMap((info) => {
+                const kinds = kindsFor(info);
+                if (kinds.length === 1) return [];
+                const isToday = info.iso === todayIso;
+                const isHighlighted = info.iso === highlightedDate;
+                return (kinds as ('morning' | 'afternoon')[]).map((kind, kindIdx) => (
+                  <th
+                    key={`${info.iso}-${kind}`}
+                    className={`schedule-subheader${kindIdx === 0 ? ' day-start' : ''}${isToday ? ' today' : ''}${isHighlighted ? ' highlighted' : ''}`}
+                    title={SHIFT_LABELS[kind]}
+                  >
+                    {SUBCOL_LABELS[kind]}
+                  </th>
+                ));
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {employees.map((emp) => (
+              <tr key={emp.id}>
+                <th className="schedule-employee-name">{emp.name}</th>
+                {dayInfos.flatMap((info) => {
+                  const isToday = info.iso === todayIso;
+                  const isHighlighted = info.iso === highlightedDate;
+                  return kindsFor(info).map((kind, kindIdx) => {
+                    const hours = hoursByCellKind.get(`${info.iso}|${emp.id}|${kind}`) ?? 0;
+                    const isEditing =
+                      editingCell?.date === info.iso &&
+                      editingCell?.employeeId === emp.id &&
+                      editingCell?.kind === kind;
+                    return (
+                      <td
+                        key={`${info.iso}-${kind}`}
+                        className={`${kindIdx === 0 ? 'day-start' : ''}${info.isWeekend ? ' weekend' : ''}${info.isHoliday ? ' holiday' : ''}${isToday ? ' today' : ''}${isHighlighted ? ' highlighted' : ''}`}
+                      >
+                        {isEditing ? (
+                          <HourInput
+                            initialHours={hours > 0 ? hours : shiftForKind(emp, kind).hours}
+                            onCommit={(value) => {
+                              onSetShiftHours(info.iso, emp.id, kind, value);
+                              setEditingCell(null);
+                            }}
+                            onCancel={() => setEditingCell(null)}
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            className={`schedule-cell${hours > 0 ? ' filled' : ''}${kind === 'afternoon' && hours > 0 ? ' afternoon' : ''}`}
+                            title={`${emp.name}, ${info.date.getDate()}. ${month + 1}. – ${SHIFT_LABELS[kind]}${hours > 0 ? ` – ${hours.toFixed(1)} h` : ''}`}
+                            onClick={() => setEditingCell({ date: info.iso, employeeId: emp.id, kind })}
+                          >
+                            {hours > 0 ? formatHours(hours) : ''}
+                          </button>
+                        )}
+                      </td>
+                    );
+                  });
+                })}
+                <td className="schedule-total-cell">
+                  <span className="schedule-total-value">{formatHours(totalHoursByEmployee.get(emp.id) ?? 0)} h</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </section>
   );

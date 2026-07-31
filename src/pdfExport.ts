@@ -1,13 +1,21 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import type { Assignment, Employee } from './types';
+import type { Assignment, Employee, ShiftDefinition } from './types';
 import { daysInMonth, toISODate } from './scheduler';
+import { getCzechHolidays } from './holidays';
 
 const WEEKDAY_LABELS = ['Po', 'Út', 'St', 'Čt', 'Pá', 'So', 'Ne'];
 const MONTH_NAMES = [
   'Leden', 'Únor', 'Březen', 'Duben', 'Květen', 'Červen',
   'Červenec', 'Srpen', 'Září', 'Říjen', 'Listopad', 'Prosinec',
 ];
+
+// The same solid accent blue the on-screen table uses to mark a filled afternoon shift - text on
+// top switches to white so it stays readable against the fully saturated fill.
+const AFTERNOON_FILL: [number, number, number] = [23, 182, 245];
+const AFTERNOON_TEXT: [number, number, number] = [255, 255, 255];
+const WEEKEND_FILL: [number, number, number] = [219, 234, 248];
+const HOLIDAY_FILL: [number, number, number] = [240, 224, 196];
 
 async function fetchFontBase64(url: string): Promise<string> {
   const buffer = await fetch(url).then((r) => r.arrayBuffer());
@@ -41,135 +49,221 @@ async function ensureCzechFont(doc: jsPDF): Promise<void> {
   doc.addFont('DejaVuSans-Bold.ttf', 'DejaVuSans', 'bold');
 }
 
-/** Generates and downloads a printable PDF of the given month's schedule. */
+interface DayColumn {
+  day: number;
+  iso: string;
+  weekdayLabel: string;
+  isWeekend: boolean;
+  isHoliday: boolean;
+  /** A plain weekday gets its own morning+afternoon slot; weekend/holiday is one whole-day slot. */
+  kinds: ShiftDefinition['kind'][];
+}
+
+function buildDayColumns(year: number, month: number): DayColumn[] {
+  const holidays = getCzechHolidays(year);
+  const totalDays = daysInMonth(year, month);
+  const columns: DayColumn[] = [];
+  for (let day = 1; day <= totalDays; day++) {
+    const date = new Date(year, month, day);
+    const iso = toISODate(date);
+    const dow = date.getDay();
+    const isWeekend = dow === 0 || dow === 6;
+    const isHoliday = !isWeekend && holidays.has(iso);
+    columns.push({
+      day,
+      iso,
+      weekdayLabel: WEEKDAY_LABELS[(dow + 6) % 7],
+      isWeekend,
+      isHoliday,
+      kinds: isWeekend ? ['weekend'] : isHoliday ? ['holiday'] : ['morning', 'afternoon'],
+    });
+  }
+  return columns;
+}
+
+/** Whole hours print as a bare integer ("8"); anything else keeps one decimal ("6,5") - saves
+ * space in columns that are only a few millimeters wide. */
+function formatHoursCompact(hours: number): string {
+  if (Number.isInteger(hours)) return String(hours);
+  return hours.toFixed(1).replace('.', ',');
+}
+
+interface ColumnMeta {
+  isWeekend: boolean;
+  isHoliday: boolean;
+  isDayStart: boolean;
+  kind: ShiftDefinition['kind'];
+}
+
+/** Draws one half-month's table (employees x days, R/O split per weekday) starting at `startY`
+ * and returns the Y position right after it, so the next half can be stacked below. Splitting
+ * the month into two halves - like this is used on paper - roughly halves the number of columns
+ * per table, which is what leaves room for a much larger, easily printable font. */
+function renderHalfTable(
+  doc: jsPDF,
+  columns: DayColumn[],
+  employees: Employee[],
+  hoursByCellKind: Map<string, number>,
+  startY: number,
+  margin: number,
+  pageWidth: number,
+  showTotal: boolean,
+  totalHoursByEmployee: Map<string, number>,
+): number {
+  const nameColWidth = 38;
+  const totalColWidth = 20;
+  const dayColCount = columns.reduce((sum, d) => sum + d.kinds.length, 0);
+  const reservedWidth = nameColWidth + (showTotal ? totalColWidth : 0);
+  const dayColWidth = (pageWidth - margin * 2 - reservedWidth) / dayColCount;
+
+  const headRow1: (string | { content: string; colSpan?: number; rowSpan?: number })[] = [
+    { content: '', rowSpan: 2 },
+  ];
+  const headRow2: string[] = [];
+  columns.forEach((d) => {
+    if (d.kinds.length > 1) {
+      headRow1.push({ content: `${d.weekdayLabel}\n${d.day}`, colSpan: 2 });
+      headRow2.push('R', 'O');
+    } else {
+      headRow1.push({ content: `${d.weekdayLabel}\n${d.day}`, rowSpan: 2 });
+    }
+  });
+  if (showTotal) headRow1.push({ content: 'Celkem', rowSpan: 2 });
+
+  const body: string[][] = employees.map((emp) => {
+    const row: string[] = [emp.name];
+    columns.forEach((d) => {
+      d.kinds.forEach((kind) => {
+        const hours = hoursByCellKind.get(`${d.iso}|${emp.id}|${kind}`) ?? 0;
+        row.push(hours > 0 ? formatHoursCompact(hours) : '');
+      });
+    });
+    if (showTotal) row.push(formatHoursCompact(totalHoursByEmployee.get(emp.id) ?? 0));
+    return row;
+  });
+
+  // Column index (in the flattened body sense, 1-based since column 0 is the employee name) ->
+  // which day it belongs to, so weekend/holiday/afternoon cells can get their shading and every
+  // day's first sub-column can get a heavier left border - same visual language as on screen.
+  const columnMeta: ColumnMeta[] = [];
+  columns.forEach((d) => {
+    d.kinds.forEach((kind, i) => {
+      columnMeta.push({ isWeekend: d.isWeekend, isHoliday: d.isHoliday, isDayStart: i === 0, kind });
+    });
+  });
+
+  const columnStyles: Record<number, { cellWidth: number; halign?: 'left'; fontStyle?: 'bold' }> = {
+    0: { cellWidth: nameColWidth, halign: 'left', fontStyle: 'bold' },
+  };
+  for (let i = 0; i < dayColCount; i++) columnStyles[i + 1] = { cellWidth: dayColWidth };
+  if (showTotal) columnStyles[dayColCount + 1] = { cellWidth: totalColWidth, fontStyle: 'bold' };
+
+  autoTable(doc, {
+    startY,
+    margin: { left: margin, right: margin },
+    head: [headRow1, headRow2],
+    body,
+    styles: {
+      font: 'DejaVuSans',
+      fontSize: 10,
+      cellPadding: 1.6,
+      halign: 'center',
+      valign: 'middle',
+      lineColor: [170, 170, 170],
+      lineWidth: 0.1,
+      textColor: 0,
+    },
+    headStyles: {
+      font: 'DejaVuSans',
+      fontStyle: 'bold',
+      fillColor: [235, 238, 242],
+      textColor: 0,
+      fontSize: 10,
+      cellPadding: 1.6,
+      lineColor: [140, 140, 140],
+      lineWidth: 0.15,
+    },
+    bodyStyles: {
+      minCellHeight: 8,
+    },
+    columnStyles,
+    theme: 'grid',
+    didParseCell: (data) => {
+      // Column 0 is the employee name, the (optional) last column is the total - only the day
+      // columns in between carry the weekend/holiday/afternoon/day-start treatment.
+      const dayIdx = data.column.index - 1;
+      const info = columnMeta[dayIdx];
+      if (!info) return;
+      if (info.isHoliday) data.cell.styles.fillColor = HOLIDAY_FILL;
+      else if (info.isWeekend) data.cell.styles.fillColor = WEEKEND_FILL;
+      else if (info.kind === 'afternoon' && data.section === 'body' && data.cell.raw) {
+        data.cell.styles.fillColor = AFTERNOON_FILL;
+        data.cell.styles.textColor = AFTERNOON_TEXT;
+      }
+      if (info.isDayStart) data.cell.styles.lineWidth = { top: 0.1, right: 0.1, bottom: 0.1, left: 0.6 };
+    },
+  });
+
+  return (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
+}
+
+/** Generates and downloads a printable A4 PDF of the given month's schedule, laid out the same
+ * way the on-screen table is: one row per employee, one (or two, for a plain weekday) column per
+ * day. The month is split into two half-month tables stacked on the page - same as the paper
+ * schedule this is modeled on - so each table has roughly half the columns and can use a much
+ * larger, easily printable font. */
 export async function exportScheduleToPdf(
   year: number,
   month: number,
   employees: Employee[],
   assignments: Assignment[],
 ): Promise<void> {
-  const employeeById = new Map(employees.map((e) => [e.id, e]));
-  const totalDays = daysInMonth(year, month);
+  const dayColumns = buildDayColumns(year, month);
+  const splitAt = Math.ceil(dayColumns.length / 2);
+  const firstHalf = dayColumns.slice(0, splitAt);
+  const secondHalf = dayColumns.slice(splitAt);
 
-  const firstDow = (new Date(year, month, 1).getDay() + 6) % 7; // Monday = 0
-  const cells: (number | null)[] = [];
-  for (let i = 0; i < firstDow; i++) cells.push(null);
-  for (let d = 1; d <= totalDays; d++) cells.push(d);
-  while (cells.length % 7 !== 0) cells.push(null);
-
-  const byDate = new Map<string, Assignment[]>();
+  const hoursByCellKind = new Map<string, number>();
+  const totalHoursByEmployee = new Map<string, number>();
   assignments.forEach((a) => {
-    if (!byDate.has(a.date)) byDate.set(a.date, []);
-    byDate.get(a.date)!.push(a);
+    const k = `${a.date}|${a.employeeId}|${a.shift.kind}`;
+    hoursByCellKind.set(k, (hoursByCellKind.get(k) ?? 0) + a.shift.hours);
+    totalHoursByEmployee.set(a.employeeId, (totalHoursByEmployee.get(a.employeeId) ?? 0) + a.shift.hours);
   });
-
-  function dayShiftLines(day: number | null): { name: string; time: string }[] {
-    if (day === null) return [];
-    const iso = toISODate(new Date(year, month, day));
-    return (byDate.get(iso) ?? [])
-      .slice()
-      .sort((a, b) => a.shift.start.localeCompare(b.shift.start))
-      .map((a) => ({
-        name: employeeById.get(a.employeeId)?.name ?? '?',
-        time: `${a.shift.start}-${a.shift.end}`,
-      }));
-  }
-
-  // A plain-text fallback per cell (also what a PDF text-selection/copy would show), even
-  // though the actual visible rendering is drawn by hand in didDrawCell below so the
-  // employee name can be bold and the time next to it can stay regular weight.
-  const rows: string[][] = [];
-  const cellData: { day: number | null; lines: { name: string; time: string }[] }[][] = [];
-  for (let i = 0; i < cells.length; i += 7) {
-    const weekDays = cells.slice(i, i + 7);
-    rows.push(
-      weekDays.map((day) => {
-        if (day === null) return '';
-        const lines = dayShiftLines(day);
-        return [String(day), ...lines.map((l) => `${l.name} ${l.time}`)].join('\n');
-      }),
-    );
-    cellData.push(weekDays.map((day) => ({ day, lines: day === null ? [] : dayShiftLines(day) })));
-  }
 
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   await ensureCzechFont(doc);
   doc.setFont('DejaVuSans', 'normal');
 
   const pageWidth = doc.internal.pageSize.getWidth();
-  const margin = 10;
-  const colWidth = (pageWidth - margin * 2) / 7;
+  const margin = 8;
 
   doc.setFont('DejaVuSans', 'bold');
   doc.setFontSize(16);
-  doc.text(`Plánovač směn – ${MONTH_NAMES[month]} ${year}`, margin, 14);
+  doc.text(`Rozvrh směn – ${MONTH_NAMES[month]} ${year}`, margin, margin + 5);
 
-  const bodyFontSize = 8;
-  const cellPad = 2;
-  const lineHeight = bodyFontSize * 1.15 * 0.352778; // pt -> mm, matching autoTable's own line height
-  const entryGap = lineHeight * 0.7; // blank space between the day number and each shift, and between shifts
-
-  autoTable(doc, {
-    startY: 20,
-    margin: { left: margin, right: margin },
-    head: [WEEKDAY_LABELS],
-    body: rows,
-    styles: {
-      font: 'DejaVuSans',
-      fontSize: bodyFontSize,
-      cellPadding: cellPad,
-      valign: 'top',
-      lineColor: [200, 200, 200],
-    },
-    bodyStyles: {
-      minCellHeight: 28,
-    },
-    headStyles: {
-      font: 'DejaVuSans',
-      fontStyle: 'bold',
-      fillColor: [23, 182, 245],
-      textColor: 255,
-      halign: 'center',
-      valign: 'middle',
-      fontSize: 8,
-      cellPadding: 1.5,
-    },
-    columnStyles: Object.fromEntries(WEEKDAY_LABELS.map((_, i) => [i, { cellWidth: colWidth }])),
-    theme: 'grid',
-    didParseCell: (data) => {
-      if (data.section !== 'body') return;
-      const info = cellData[data.row.index]?.[data.column.index];
-      if (!info || info.day === null) return;
-      // Reserve enough height for our own hand-drawn lines (day number + one per shift, each
-      // with a blank gap after it), then blank the automatic text so it doesn't double up
-      // with the manual drawing below.
-      const totalLines = 1 + info.lines.length;
-      const needed = totalLines * (lineHeight + entryGap) + cellPad * 2;
-      data.cell.styles.minCellHeight = Math.max(data.cell.styles.minCellHeight ?? 0, needed);
-      data.cell.text = [];
-    },
-    didDrawCell: (data) => {
-      if (data.section !== 'body') return;
-      const info = cellData[data.row.index]?.[data.column.index];
-      if (!info || info.day === null) return;
-      const { cell } = data;
-      let y = cell.y + cellPad + lineHeight * 0.8;
-      doc.setFontSize(bodyFontSize);
-      doc.setFont('DejaVuSans', 'bold');
-      doc.setTextColor(23, 182, 245); // same blue as the Po-Ne header row
-      doc.text(String(info.day), cell.x + cellPad, y);
-      doc.setTextColor(0, 0, 0);
-      y += lineHeight + entryGap;
-      info.lines.forEach((line) => {
-        doc.setFont('DejaVuSans', 'bold');
-        doc.text(line.name, cell.x + cellPad, y);
-        const nameWidth = doc.getTextWidth(`${line.name} `);
-        doc.setFont('DejaVuSans', 'normal');
-        doc.text(line.time, cell.x + cellPad + nameWidth, y);
-        y += lineHeight + entryGap;
-      });
-    },
-  });
+  const afterFirst = renderHalfTable(
+    doc,
+    firstHalf,
+    employees,
+    hoursByCellKind,
+    margin + 11,
+    margin,
+    pageWidth,
+    false,
+    totalHoursByEmployee,
+  );
+  renderHalfTable(
+    doc,
+    secondHalf,
+    employees,
+    hoursByCellKind,
+    afterFirst + 6,
+    margin,
+    pageWidth,
+    true,
+    totalHoursByEmployee,
+  );
 
   const filename = `planovac-smen-${year}-${String(month + 1).padStart(2, '0')}.pdf`;
   doc.save(filename);

@@ -4,6 +4,7 @@
   --bg: #060b16;
   --bg-raised: #0d1526;
   --border: rgba(34, 184, 255, 0.18);
+  --divider-strong: rgba(255, 255, 255, 0.28);
   --code-bg: rgba(34, 184, 255, 0.1);
   --accent: #17b6f5;
   --accent-ink: #041625;
@@ -13,6 +14,7 @@
   --gold-text: #fbbf24;
   --accent-bg: rgba(23, 182, 245, 0.14);
   --accent-border: rgba(23, 182, 245, 0.4);
+  --afternoon-fill: rgb(0, 128, 179);
   --shadow: rgba(2, 4, 12, 0.45) 0 16px 30px -18px;
 
   --input-bg: rgba(2, 5, 14, 0.5);
@@ -42,6 +44,7 @@
   --bg: #eef4fb;
   --bg-raised: #ffffff;
   --border: rgba(15, 100, 160, 0.16);
+  --divider-strong: rgba(0, 0, 0, 0.28);
   --code-bg: rgba(23, 182, 245, 0.1);
   --accent: #17b6f5;
   --accent-ink: #04182a;
@@ -51,6 +54,7 @@
   --gold-text: #b45309;
   --accent-bg: rgba(23, 182, 245, 0.12);
   --accent-border: rgba(23, 182, 245, 0.5);
+  --afternoon-fill: rgb(23, 182, 245);
   --shadow: rgba(30, 64, 110, 0.1) 0 16px 30px -18px;
 
   --input-bg: #f3f8fe;

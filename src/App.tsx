@@ -10,7 +10,6 @@ import { HOLIDAY_SHIFT, SHIFTS, WEEKEND_SHIFT } from "./types";
 import {
   computeWarnings,
   generateSchedule,
-  hoursBetween,
   toISODate,
   totalHoursByEmployee,
 } from "./scheduler";
@@ -397,115 +396,51 @@ function AppContent() {
     });
   }
 
-  function handleUpdateAssignmentEmployee(
-    index: number,
-    newEmployeeId: string,
+  // The whole schedule is edited through one move: click a day/employee/shift-kind cell, type
+  // an hours number (0 or empty removes it). Start/end time always comes from the standard
+  // template for that employee+kind - there's no per-shift custom time editing anymore.
+  function handleSetShiftHours(
+    date: string,
+    employeeId: string,
+    kind: ShiftDefinition["kind"],
+    hours: number,
   ) {
-    const employee = employees.find((e) => e.id === newEmployeeId);
+    const employee = employees.find((e) => e.id === employeeId);
     if (!employee) return;
-    const previous = assignments[index];
-    const previousEmployee = employees.find((e) => e.id === previous.employeeId);
-    const next = assignments.map((a, i) =>
-      i === index
-        ? {
-            ...a,
-            employeeId: newEmployeeId,
-            shift: shiftForEmployee(employee, a.shift.kind),
-          }
-        : a,
+    const existingIndex = assignments.findIndex(
+      (a) => a.date === date && a.employeeId === employeeId && a.shift.kind === kind,
     );
-    setAssignments(next);
-    appendHistory(
-      key,
-      `Směna ${formatHistoryDay(previous.date)} přesunuta z ${previousEmployee?.name ?? "?"} na ${employee.name}.`,
-    );
-  }
 
-  function handleUpdateAssignmentKind(index: number, kind: "morning" | "afternoon") {
-    const a = assignments[index];
-    const employee = employees.find((e) => e.id === a.employeeId);
-    if (!employee) return;
-    const next = assignments.map((x, i) => (i === index ? { ...x, shift: shiftForEmployee(employee, kind) } : x));
-    setAssignments(next);
-    appendHistory(
-      key,
-      `Změněn typ směny (${employee.name}, ${formatHistoryDay(a.date)}) na ${SHIFT_KIND_LABELS[kind]}.`,
-    );
-  }
+    if (hours <= 0) {
+      if (existingIndex === -1) return;
+      setAssignments(assignments.filter((_, i) => i !== existingIndex));
+      appendHistory(
+        key,
+        `Odebrána směna: ${employee.name}, ${formatHistoryDay(date)} (${SHIFT_KIND_LABELS[kind]}).`,
+      );
+      return;
+    }
 
-  function handleUpdateAssignmentTime(
-    index: number,
-    field: "start" | "end",
-    value: string,
-  ) {
-    if (!value) return;
-    const a = assignments[index];
-    const employee = employees.find((e) => e.id === a.employeeId);
-    const next = assignments.map((a, i) => {
-      if (i !== index) return a;
-      const start = field === "start" ? value : a.shift.start;
-      const end = field === "end" ? value : a.shift.end;
-      const duration = hoursBetween(start, end);
-      // A shift 6h or under never has a lunch break - shortening one below that threshold drops
-      // it automatically, since it's no longer legally required. Growing it back past 6h doesn't
-      // re-add a break on its own; that's the "+ oběd" toggle's job (see handleToggleBreak).
-      const breakMinutes = duration > 6 ? (a.shift.breakMinutes ?? 0) : 0;
-      return {
-        ...a,
-        shift: { ...a.shift, start, end, breakMinutes, hours: duration - breakMinutes / 60 },
-      };
-    });
-    setAssignments(next);
-    appendHistory(
-      key,
-      `Upraven ${field === "start" ? "začátek" : "konec"} směny (${employee?.name ?? "?"}, ${formatHistoryDay(a.date)}) na ${value}.`,
-    );
-  }
-
-  function handleToggleBreak(index: number) {
-    const target = assignments[index];
-    const employee = employees.find((e) => e.id === target.employeeId);
-    const addingBreak = (target.shift.breakMinutes ?? 0) === 0;
-    const next = assignments.map((a, i) => {
-      if (i !== index) return a;
-      const duration = hoursBetween(a.shift.start, a.shift.end);
-      const breakMinutes = (a.shift.breakMinutes ?? 0) > 0 ? 0 : 30;
-      return {
-        ...a,
-        shift: { ...a.shift, breakMinutes, hours: duration - breakMinutes / 60 },
-      };
-    });
-    setAssignments(next);
-    appendHistory(
-      key,
-      `${addingBreak ? "Přidána" : "Odebrána"} pauza na oběd u směny (${employee?.name ?? "?"}, ${formatHistoryDay(target.date)}).`,
-    );
-  }
-
-  function handleRemoveAssignment(index: number) {
-    const target = assignments[index];
-    const employee = employees.find((e) => e.id === target.employeeId);
-    setAssignments(assignments.filter((_, i) => i !== index));
-    appendHistory(key, `Odebrána směna: ${employee?.name ?? "?"}, ${formatHistoryDay(target.date)}.`);
+    const shift = { ...shiftForEmployee(employee, kind), hours };
+    if (existingIndex === -1) {
+      setAssignments([...assignments, { date, employeeId, shift }]);
+      appendHistory(
+        key,
+        `Přidána směna: ${employee.name}, ${formatHistoryDay(date)} (${SHIFT_KIND_LABELS[kind]}, ${hours} h).`,
+      );
+    } else {
+      setAssignments(assignments.map((a, i) => (i === existingIndex ? { ...a, shift } : a)));
+      appendHistory(
+        key,
+        `Upravena směna: ${employee.name}, ${formatHistoryDay(date)} (${SHIFT_KIND_LABELS[kind]}) na ${hours} h.`,
+      );
+    }
   }
 
   function handleWarningClick(date: string) {
     document.getElementById(`day-${date}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
     setHighlightedDate(date);
     setTimeout(() => setHighlightedDate(null), 2000);
-  }
-
-  function handleAddAssignment(
-    date: string,
-    employeeId: string,
-    shift: ShiftDefinition,
-  ) {
-    const employee = employees.find((e) => e.id === employeeId);
-    setAssignments([...assignments, { date, employeeId, shift }]);
-    appendHistory(
-      key,
-      `Přidána směna: ${employee?.name ?? "?"}, ${formatHistoryDay(date)} (${SHIFT_KIND_LABELS[shift.kind]}).`,
-    );
   }
 
   function changeMonth(delta: number) {
@@ -666,12 +601,7 @@ function AppContent() {
         month={month}
         employees={employees}
         assignments={assignments}
-        onUpdateAssignmentEmployee={handleUpdateAssignmentEmployee}
-        onUpdateAssignmentKind={handleUpdateAssignmentKind}
-        onUpdateAssignmentTime={handleUpdateAssignmentTime}
-        onToggleBreak={handleToggleBreak}
-        onRemoveAssignment={handleRemoveAssignment}
-        onAddAssignment={handleAddAssignment}
+        onSetShiftHours={handleSetShiftHours}
         highlightedDate={highlightedDate}
       />
 
