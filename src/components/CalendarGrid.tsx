@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import type { Assignment, Employee, ShiftDefinition } from '../types';
+import type { Assignment, AvailabilityKind, Employee, ShiftDefinition, UnavailabilityMap } from '../types';
 import { HOLIDAY_SHIFT, SHIFTS, WEEKEND_SHIFT } from '../types';
 import { daysInMonth, toISODate } from '../scheduler';
 import { getCzechHolidays } from '../holidays';
@@ -9,7 +9,9 @@ interface Props {
   month: number;
   employees: Employee[];
   assignments: Assignment[];
+  unavailability: UnavailabilityMap;
   onSetShiftHours: (date: string, employeeId: string, kind: ShiftDefinition['kind'], hours: number) => void;
+  onToggleUnavailable: (employeeId: string, iso: string, kind?: AvailabilityKind) => void;
   highlightedDate?: string | null;
 }
 
@@ -57,6 +59,23 @@ function shiftForKind(employee: Employee, kind: ShiftDefinition['kind']): ShiftD
 
 function formatHours(hours: number): string {
   return hours.toFixed(1).replace('.', ',');
+}
+
+/** Whether this employee is marked unavailable for this specific cell - a plain weekday's R/O
+ * cell checks just its own kind, while a whole-day cell (weekend/holiday, which has no
+ * morning/afternoon split of its own) is only "unavailable" once both marks are set together,
+ * same as how the day-off toggle below sets them: there's no third kind to represent "off for a
+ * single whole day" in the underlying data. */
+function isMarkedUnavailable(
+  unavailability: UnavailabilityMap,
+  employeeId: string,
+  iso: string,
+  kind: ShiftDefinition['kind'],
+): boolean {
+  const marks = unavailability[employeeId]?.[iso];
+  if (!marks) return false;
+  if (kind === 'morning' || kind === 'afternoon') return marks.has(kind);
+  return marks.has('morning') && marks.has('afternoon');
 }
 
 interface HourInputProps {
@@ -107,7 +126,16 @@ function HourInput({ initialHours, onCommit, onCancel }: HourInputProps) {
   );
 }
 
-export function CalendarGrid({ year, month, employees, assignments, onSetShiftHours, highlightedDate }: Props) {
+export function CalendarGrid({
+  year,
+  month,
+  employees,
+  assignments,
+  unavailability,
+  onSetShiftHours,
+  onToggleUnavailable,
+  highlightedDate,
+}: Props) {
   const totalDays = daysInMonth(year, month);
   const todayIso = toISODate(new Date());
   const holidays = getCzechHolidays(year);
@@ -134,7 +162,10 @@ export function CalendarGrid({ year, month, employees, assignments, onSetShiftHo
   return (
     <section className="panel calendar-panel">
       <h2>Rozvrh</h2>
-      <p className="muted">Klikněte na políčko a napište počet odpracovaných hodin (0 nebo prázdné pole směnu odebere).</p>
+      <p className="muted">
+        Klikněte na políčko a napište počet odpracovaných hodin (0 nebo prázdné pole směnu odebere). Pravým
+        tlačítkem označte, kdy daný člověk nemůže pracovat - generátor to bude respektovat.
+      </p>
       <div className="schedule-scroll">
         <table className="schedule-table">
           <thead>
@@ -189,6 +220,7 @@ export function CalendarGrid({ year, month, employees, assignments, onSetShiftHo
                   const isHighlighted = info.iso === highlightedDate;
                   return kindsFor(info).map((kind, kindIdx) => {
                     const hours = hoursByCellKind.get(`${info.iso}|${emp.id}|${kind}`) ?? 0;
+                    const unavailable = isMarkedUnavailable(unavailability, emp.id, info.iso, kind);
                     const isEditing =
                       editingCell?.date === info.iso &&
                       editingCell?.employeeId === emp.id &&
@@ -210,9 +242,17 @@ export function CalendarGrid({ year, month, employees, assignments, onSetShiftHo
                         ) : (
                           <button
                             type="button"
-                            className={`schedule-cell${hours > 0 ? ' filled' : ''}${kind === 'afternoon' && hours > 0 ? ' afternoon' : ''}`}
-                            title={`${emp.name}, ${info.date.getDate()}. ${month + 1}. – ${SHIFT_LABELS[kind]}${hours > 0 ? ` – ${hours.toFixed(1)} h` : ''}`}
+                            className={`schedule-cell${hours > 0 ? ' filled' : ''}${kind === 'afternoon' && hours > 0 ? ' afternoon' : ''}${unavailable ? ' unavailable' : ''}`}
+                            title={`${emp.name}, ${info.date.getDate()}. ${month + 1}. – ${SHIFT_LABELS[kind]}${hours > 0 ? ` – ${hours.toFixed(1)} h` : ''}${unavailable ? ' – nedostupný (pravé tlačítko zruší)' : ' – pravé tlačítko označí jako nedostupný'}`}
                             onClick={() => setEditingCell({ date: info.iso, employeeId: emp.id, kind })}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              onToggleUnavailable(
+                                emp.id,
+                                info.iso,
+                                kind === 'morning' || kind === 'afternoon' ? kind : undefined,
+                              );
+                            }}
                           >
                             {hours > 0 ? formatHours(hours) : ''}
                           </button>

@@ -36,7 +36,6 @@ import { LoginGate } from "./components/LoginGate";
 import { EmployeeManager } from "./components/EmployeeManager";
 import { WarningsPanel } from "./components/WarningsPanel";
 import { CalendarGrid } from "./components/CalendarGrid";
-import { AvailabilityGrid } from "./components/AvailabilityGrid";
 import { SpaceScene } from "./components/SpaceScene";
 import { HistoryPanel } from "./components/HistoryPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
@@ -551,20 +550,14 @@ function AppContent() {
         </aside>
       </div>
 
-      <AvailabilityGrid
-        year={year}
-        month={month}
-        employees={employees}
-        unavailability={unavailability}
-        onToggle={handleToggleUnavailable}
-      />
-
       <CalendarGrid
         year={year}
         month={month}
         employees={employees}
         assignments={assignments}
+        unavailability={unavailability}
         onSetShiftHours={handleSetShiftHours}
+        onToggleUnavailable={handleToggleUnavailable}
         highlightedDate={highlightedDate}
       />
 
