@@ -20,6 +20,7 @@ import {
   loadHistorySeen,
   loadLocalSnapshot,
   loadSchedules,
+  loadShowIcsExport,
   loadTheme,
   loadUnavailability,
   markHistorySeen,
@@ -28,17 +29,16 @@ import {
   saveEmployees,
   saveHistory,
   saveSchedules,
+  saveShowIcsExport,
   saveTheme,
   saveUnavailability,
 } from "./storage";
 import { supabase } from "./supabaseClient";
 import { LoginGate } from "./components/LoginGate";
-import { EmployeeManager } from "./components/EmployeeManager";
 import { WarningsPanel } from "./components/WarningsPanel";
 import { CalendarGrid } from "./components/CalendarGrid";
-import { SpaceScene } from "./components/SpaceScene";
 import { HistoryPanel } from "./components/HistoryPanel";
-import { SettingsPanel } from "./components/SettingsPanel";
+import { SettingsModal } from "./components/SettingsModal";
 import "./App.css";
 
 const SHIFT_KIND_LABELS: Record<ShiftDefinition["kind"], string> = {
@@ -90,6 +90,7 @@ function AppContent() {
   const [ptLongShortWeek, setPtLongShortWeek] = useState(false);
   const [icsEmployeeId, setIcsEmployeeId] = useState("all");
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
+  const [showIcsExport, setShowIcsExport] = useState(() => loadShowIcsExport());
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -174,6 +175,9 @@ function AppContent() {
     saveTheme(theme);
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
+  useEffect(() => {
+    saveShowIcsExport(showIcsExport);
+  }, [showIcsExport]);
   useEffect(() => {
     if (!loaded) return;
     saveUnavailability(unavailability)
@@ -261,14 +265,6 @@ function AppContent() {
       .map((e) => ({ id: e.id, color: employeeColor(e.id, employees) }));
   }, [schedules, employees]);
 
-  const todayAssignments = useMemo(() => {
-    const now = new Date();
-    const todayKey = monthKey(now.getFullYear(), now.getMonth());
-    const todaySchedule = schedules[todayKey] ?? [];
-    const todayISO = toISODate(now);
-    return todaySchedule.filter((a) => a.date === todayISO);
-  }, [schedules]);
-
   function setAssignments(next: Assignment[]) {
     setSchedules((prev) => ({ ...prev, [key]: next }));
   }
@@ -347,6 +343,13 @@ function AppContent() {
     iso: string,
     kind?: AvailabilityKind,
   ) {
+    const employee = employees.find((e) => e.id === employeeId);
+    const currentMarks = unavailability[employeeId]?.[iso] ?? new Set<AvailabilityKind>();
+    const becameUnavailable = kind
+      ? !currentMarks.has(kind)
+      : !(currentMarks.has("morning") && currentMarks.has("afternoon"));
+    const kindLabel = kind === "morning" ? "ranní" : kind === "afternoon" ? "odpolední" : "celý den";
+
     setUnavailability((prev) => {
       const employeeDays = prev[employeeId] ?? {};
       const current = employeeDays[iso] ?? new Set<AvailabilityKind>();
@@ -365,6 +368,13 @@ function AppContent() {
       else nextDays[iso] = next;
       return { ...prev, [employeeId]: nextDays };
     });
+
+    if (employee) {
+      appendHistory(
+        key,
+        `${becameUnavailable ? "Nastavena" : "Zrušena"} nedostupnost: ${employee.name}, ${formatHistoryDay(iso)} (${kindLabel}).`,
+      );
+    }
   }
 
   // The whole schedule is edited through one move: click a day/employee/shift-kind cell, type
@@ -409,7 +419,9 @@ function AppContent() {
   }
 
   function handleWarningClick(date: string) {
-    document.getElementById(`day-${date}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    document
+      .getElementById(`day-${date}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
     setHighlightedDate(date);
     setTimeout(() => setHighlightedDate(null), 2000);
   }
@@ -527,39 +539,28 @@ function AppContent() {
         </div>
       </header>
 
-      <div className="app-layout">
-        <main className="main-content">
-          <div className="history-overlay">
-            <HistoryPanel entries={monthHistory} hasUnseen={hasUnseenHistory} onOpen={handleOpenHistory} />
-          </div>
-          <SpaceScene
-            workingEmployees={workingEmployees}
-            employees={employees}
-            todayAssignments={todayAssignments}
-          />
-        </main>
-
-        <aside className="warnings-column">
+      <div className="calendar-panel-wrapper">
+        <div className="warnings-overlay">
           <WarningsPanel
             warnings={warnings}
             onWarningClick={handleWarningClick}
             onDismiss={handleDismissWarning}
             dismissedWarnings={dismissedWarningObjects}
             onRestore={handleRestoreWarning}
+            monthKey={key}
           />
-        </aside>
+        </div>
+        <CalendarGrid
+          year={year}
+          month={month}
+          employees={employees}
+          assignments={assignments}
+          unavailability={unavailability}
+          onSetShiftHours={handleSetShiftHours}
+          onToggleUnavailable={handleToggleUnavailable}
+          highlightedDate={highlightedDate}
+        />
       </div>
-
-      <CalendarGrid
-        year={year}
-        month={month}
-        employees={employees}
-        assignments={assignments}
-        unavailability={unavailability}
-        onSetShiftHours={handleSetShiftHours}
-        onToggleUnavailable={handleToggleUnavailable}
-        highlightedDate={highlightedDate}
-      />
 
       <div className="export-bar">
         <div className="export-bar-left">
@@ -591,58 +592,45 @@ function AppContent() {
           >
             Stáhnout PDF
           </button>
-          <span className="ics-export">
-            <select
-              value={icsEmployeeId}
-              onChange={(e) => setIcsEmployeeId(e.target.value)}
-              aria-label="Pro koho stáhnout kalendář"
-            >
-              <option value="all">Všichni</option>
-              {employees.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              className="secondary-btn"
-              onClick={handleExportIcs}
-              disabled={assignments.length === 0}
-            >
-              Stáhnout kalendář
-            </button>
-          </span>
+          {showIcsExport && (
+            <span className="ics-export">
+              <select
+                value={icsEmployeeId}
+                onChange={(e) => setIcsEmployeeId(e.target.value)}
+                aria-label="Pro koho stáhnout kalendář"
+              >
+                <option value="all">Všichni</option>
+                {employees.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={handleExportIcs}
+                disabled={assignments.length === 0}
+              >
+                Stáhnout kalendář
+              </button>
+            </span>
+          )}
         </div>
       </div>
 
-      <SettingsPanel>
-        <EmployeeManager employees={employees} onChange={setEmployees} />
-      </SettingsPanel>
-
       <footer className="app-footer">
-        <span className="theme-toggle-label">
-          {theme === "light" ? "Světlý režim" : "Tmavý režim"}
-        </span>
-        <button
-          type="button"
-          className="theme-toggle"
-          role="switch"
-          aria-checked={theme === "light"}
-          aria-label="Přepnout světlý/tmavý režim"
-          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-        >
-          <span className="theme-toggle-track">
-            <span className="theme-toggle-thumb" />
-          </span>
-        </button>
-        <button
-          type="button"
-          className="secondary-btn"
-          onClick={() => supabase.auth.signOut()}
-        >
-          Odhlásit
-        </button>
+        <HistoryPanel entries={monthHistory} hasUnseen={hasUnseenHistory} onOpen={handleOpenHistory} />
+        <SettingsModal
+          employees={employees}
+          onChangeEmployees={setEmployees}
+          workingEmployees={workingEmployees}
+          theme={theme}
+          onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
+          showIcsExport={showIcsExport}
+          onToggleIcsExport={() => setShowIcsExport((v) => !v)}
+          onLogout={() => supabase.auth.signOut()}
+        />
       </footer>
     </div>
   );

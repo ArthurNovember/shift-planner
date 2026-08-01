@@ -184,7 +184,7 @@
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--danger-border);
+  background: var(--accent);
   color: #ffffff;
   font-size: 11px;
   font-weight: 800;
@@ -198,6 +198,47 @@
   width: 340px;
   max-width: min(340px, 90vw);
   max-height: 360px;
+  overflow-y: auto;
+  z-index: 30;
+  background: var(--bg);
+}
+
+.warnings-widget {
+  position: relative;
+}
+
+.warnings-toggle {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  font-size: 16px;
+}
+
+.warnings-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--danger-border);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.warnings-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 360px;
+  max-width: min(360px, 90vw);
+  max-height: 400px;
   overflow-y: auto;
   z-index: 30;
   background: var(--bg);
@@ -349,42 +390,14 @@
   box-shadow: 0 0 6px 1px rgba(255, 255, 255, 0.6);
 }
 
-.app-layout {
-  display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 20px;
-  align-items: start;
-  margin-bottom: 20px;
-}
-
-@media (max-width: 900px) {
-  .app-layout {
-    grid-template-columns: 1fr;
-  }
-}
-
-.warnings-column {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.warnings-column .panel {
-  box-sizing: border-box;
-}
-
-.main-content {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  min-width: 0;
+.calendar-panel-wrapper {
   position: relative;
 }
 
-.history-overlay {
+.warnings-overlay {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 14px;
+  right: 18px;
   z-index: 5;
 }
 
@@ -721,42 +734,81 @@ select {
   opacity: 0.75;
 }
 
-/* Settings (collapsed employee management etc.) */
-.settings-panel {
-  margin-top: 20px;
+/* Settings modal (theme, employee list, sign out) */
+.settings-gear {
+  width: 32px;
+  height: 32px;
+  font-size: 18px;
 }
 
-.settings-toggle {
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 4, 12, 0.6);
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
+  z-index: 100;
+  padding: 20px;
+}
+
+.modal-panel {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
   width: 100%;
-  background: transparent;
-  border: none;
-  padding: 0;
-  font-family: var(--heading);
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-h);
+  max-width: 420px;
+  max-height: 90vh;
+  overflow-y: auto;
 }
 
-.settings-toggle-icon {
-  transition: transform 0.15s ease;
+.settings-orbit {
+  position: relative;
+  height: 170px;
+  overflow: hidden;
+  border-radius: 16px 16px 0 0;
+  background: var(--cell-bg);
+  border-bottom: 1px solid var(--border);
 }
 
-.settings-toggle-icon.open {
-  transform: rotate(180deg);
+.settings-orbit .orbit-system {
+  transform: translate(-50%, -50%) scale(0.55);
 }
 
-.settings-content {
-  margin-top: 14px;
+.settings-modal-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
 }
 
-.settings-content .panel {
+.settings-modal-body {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-modal-body h2 {
+  margin: 0;
+}
+
+.settings-modal-body .panel {
   border: none;
   border-radius: 0;
   padding: 0;
   box-shadow: none;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-logout {
+  align-self: flex-start;
 }
 
 /* Calendar (schedule table) */
@@ -946,72 +998,7 @@ select {
   outline: none;
 }
 
-/* Space scene filler, with today's shifts overlaid in a corner */
-.space-scene {
-  flex: 1;
-  min-height: 240px;
-  position: relative;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  overflow: hidden;
-}
-
-.space-scene-today {
-  position: absolute;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  width: 220px;
-  padding: 14px;
-  overflow-y: auto;
-  z-index: 1;
-  box-sizing: border-box;
-}
-
-.space-scene-today h2 {
-  font-size: 15px;
-  margin-bottom: 12px;
-  letter-spacing: 0.3px;
-}
-
-.today-shifts-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.today-shift-row {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 13px;
-}
-
-.today-shift-header {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.today-shift-name {
-  font-weight: 600;
-  color: var(--text-h);
-}
-
-.today-shift-kind {
-  color: var(--text);
-}
-
-.today-shift-time {
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-  margin-left: 16px;
-}
-
+/* Orbit graphic - who's currently clocked in, shown as the settings modal's header art */
 .orbit-system {
   position: absolute;
   top: 50%;
@@ -1133,99 +1120,8 @@ select {
     max-width: 100%;
   }
 
-  /* Calendar becomes a one-day-per-row agenda instead of a 7-column grid, which has no
-     usable width left on a phone screen. */
   .calendar-panel {
     padding: 6px;
-  }
-
-  .calendar-grid {
-    grid-template-columns: 1fr;
-    gap: 10px;
-  }
-
-  .calendar-grid-header,
-  .calendar-cell.empty {
-    display: none;
-  }
-
-  .calendar-cell {
-    min-height: 0;
-  }
-
-  .calendar-cell-weekday {
-    display: inline;
-  }
-
-  /* A full-width agenda row has far more room than the squeezed desktop grid column did,
-     so shift details can afford to be bigger and easier to tap/read. */
-  .shift-block {
-    font-size: 13px;
-    padding: 8px 10px;
-  }
-
-  .shift-kind-label,
-  .shift-kind-select {
-    font-size: 13px;
-  }
-
-  .break-toggle {
-    font-size: 12px;
-    padding: 3px 7px;
-  }
-
-  .shift-time-input {
-    font-size: 13px;
-    width: 84px;
-    padding: 3px 5px;
-  }
-
-  .shift-employee-row select,
-  .add-shift-row select {
-    font-size: 13px;
-    padding: 4px 6px;
-  }
-
-  .shift-employee-row .icon-btn,
-  .add-shift-row .icon-btn {
-    width: 26px;
-    height: 26px;
-    font-size: 15px;
-  }
-
-  /* Availability grid keeps its horizontal scroll (a whole month never fits stacked either
-     way), but touch targets grow closer to a comfortable tap size. */
-  .availability-cell {
-    width: 34px;
-    height: 34px;
-  }
-
-  .availability-subcell {
-    width: 24px;
-    height: 34px;
-    font-size: 11px;
-  }
-
-  /* Today's-shifts panel stacks above the orbit animation instead of overlaying it - there's
-     no spare width on a phone for a floating sidebar. */
-  .space-scene {
-    flex-direction: column;
-    min-height: 380px;
-  }
-
-  .space-scene-today {
-    position: static;
-    width: 100%;
-    height: auto;
-    overflow: visible;
-    padding: 14px 14px 0;
-  }
-
-  .orbit-system {
-    top: auto;
-    bottom: 16px;
-    left: 50%;
-    transform: translateX(-50%) scale(0.72);
   }
 
   .app-footer {

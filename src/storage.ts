@@ -6,6 +6,7 @@ const SCHEDULES_KEY = 'shiftPlanner.schedules';
 const UNAVAILABILITY_KEY = 'shiftPlanner.unavailability';
 const THEME_KEY = 'shiftPlanner.theme';
 const HISTORY_SEEN_KEY = 'shiftPlanner.historySeen';
+const SHOW_ICS_EXPORT_KEY = 'shiftPlanner.showIcsExport';
 
 export type Theme = 'dark' | 'light';
 
@@ -16,6 +17,16 @@ export function loadTheme(): Theme {
 
 export function saveTheme(theme: Theme): void {
   localStorage.setItem(THEME_KEY, theme);
+}
+
+// Whether to show the .ics calendar export control - some people never use it, so it's a
+// per-device opt-out (defaults to shown) rather than shared team data, same as theme.
+export function loadShowIcsExport(): boolean {
+  return localStorage.getItem(SHOW_ICS_EXPORT_KEY) !== 'false';
+}
+
+export function saveShowIcsExport(show: boolean): void {
+  localStorage.setItem(SHOW_ICS_EXPORT_KEY, String(show));
 }
 
 export const DEFAULT_EMPLOYEES: Employee[] = [
