@@ -269,7 +269,7 @@ export function CalendarGrid({
                         ) : (
                           <button
                             type="button"
-                            className={`schedule-cell${hours > 0 ? ' filled' : ''}${kind === 'afternoon' && hours > 0 ? ' afternoon' : ''}${unavailable ? ' unavailable' : ''}${isFixed ? ' fixed' : ''}`}
+                            className={`schedule-cell${hours > 0 ? ' filled' : ''}${(kind === 'afternoon' || kind === 'weekend') && hours > 0 ? ' emphasize' : ''}${unavailable ? ' unavailable' : ''}${isFixed ? ' fixed' : ''}`}
                             title={`${emp.name}, ${info.date.getDate()}. ${month + 1}. – ${SHIFT_LABELS[kind]}${hours > 0 ? ` – ${hours.toFixed(1)} h` : ''}${isFixed ? ' (pevná směna)' : ''}${unavailable ? ' – nedostupný (pravé tlačítko zruší)' : ' – pravé tlačítko označí jako nedostupný'}`}
                             onClick={() => setEditingCell({ date: info.iso, employeeId: emp.id, kind })}
                             onContextMenu={(e) => {

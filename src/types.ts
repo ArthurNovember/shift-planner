@@ -94,6 +94,12 @@ export const FULLTIME_HOURS_TOLERANCE = 5;
  * to balance out that extra weekend load and give them a real rest around it. */
 export const FT_SHORT_WEEK_REDUCTION = 2;
 
+/** The week right after covering the weekend gets this many fewer weekday shifts too, trimmed
+ * from its very start (Monday) - since the weekend person now works straight through Friday into
+ * the weekend (see the Friday-afternoon preference), this is the only place left for a real break
+ * to land before the following week's shifts would otherwise run right on into it. */
+export const FT_POST_WEEKEND_RECOVERY_DAYS = 1;
+
 /** On a day both fulltime employees are scheduled, this is the chance they both take the
  * same shift (instead of always splitting morning/afternoon) - the other shift becomes a
  * gap for part-time to cover, same as any other short-week gap. */

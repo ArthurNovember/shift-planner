@@ -58,3 +58,16 @@ export function getCzechHolidays(year: number): Map<string, string> {
 
   return map;
 }
+
+/** Fixed-date days off-limits to scheduling entirely, every year - the business is simply closed,
+ * so unlike a regular public holiday (which still gets a single skeleton-crew shift), nobody gets
+ * a shift at all here, whatever day of the week they land on. */
+const CLOSED_DAYS: { month: number; day: number }[] = [
+  { month: 12, day: 24 },
+  { month: 12, day: 31 },
+];
+
+/** ISO dates the business is closed for the given calendar year - see CLOSED_DAYS. */
+export function getClosedDays(year: number): Set<string> {
+  return new Set(CLOSED_DAYS.map(({ month, day }) => iso(year, month, day)));
+}

@@ -967,9 +967,10 @@ select {
   font-weight: 700;
 }
 
-/* A filled afternoon shift gets a background tint so it stands out from a morning one at a
-   glance, now that the R/O column label is the only other thing telling them apart. */
-.schedule-cell.filled.afternoon {
+/* A filled afternoon or weekend shift gets a background tint so it stands out from a plain
+   morning one at a glance - for afternoon, the R/O column label is otherwise the only thing
+   telling it apart from a morning shift; a weekend shift gets the same treatment for consistency. */
+.schedule-cell.filled.emphasize {
   background: var(--afternoon-fill);
   color: #ffffff;
 }

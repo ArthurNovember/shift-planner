@@ -1,5 +1,6 @@
 import type { Assignment, Employee, ScheduleOptions, ScheduleWarning, ShiftDefinition, UnavailabilityMap } from './types';
 import {
+  FT_POST_WEEKEND_RECOVERY_DAYS,
   FT_SHORT_WEEK_REDUCTION,
   FT_TOGETHER_CHANCE,
   FULLTIME_HOURS_TOLERANCE,
@@ -10,7 +11,7 @@ import {
   SHIFTS,
   WEEKEND_SHIFT,
 } from './types';
-import { getCzechHolidays } from './holidays';
+import { getClosedDays, getCzechHolidays } from './holidays';
 
 /** Which shift definitions make sense for this employee on a weekday vs. weekend vs. holiday day. */
 export function shiftOptionsFor(employee: Employee, isWeekend: boolean, isHoliday = false): ShiftDefinition[] {
@@ -115,6 +116,11 @@ export function generateSchedule(
   // machinery entirely instead of needing special-cased checks scattered through it.
   const holidays = getCzechHolidays(year);
 
+  // Days the business is closed outright (Christmas Eve, New Year's Eve) - unlike a regular
+  // holiday, nobody gets any shift here at all, not even a skeleton crew, whatever day of the
+  // week they land on.
+  const closedDays = getClosedDays(year);
+
   /** This month's fulltime target, nudged opposite last month's miss (over last time -> a bit
    * lower this time, and vice versa) so a two-month pair averages back toward the nominal 160h
    * instead of each month independently landing wherever its own week/weekend structure allows.
@@ -153,6 +159,22 @@ export function generateSchedule(
     return !!marks && marks.has('morning') && marks.has('afternoon');
   }
 
+  // How many afternoon shifts this employee has so far this month - re-read fresh from the real
+  // assignments each time (not a running tally) so it's always accurate regardless of which order
+  // the various phases below run in or how many times a shift gets reassigned.
+  function afternoonCountSoFar(employeeId: string): number {
+    return assignments.filter((a) => a.employeeId === employeeId && a.shift.kind === 'afternoon').length;
+  }
+
+  // A simple "about one afternoon a week" pace, used only as a solo tie-breaker (see
+  // afternoonCountSoFar) for whether *this* person specifically is due for an afternoon shift -
+  // when there's a direct choice between two people instead, comparing their afternoonCountSoFar
+  // directly already picks whoever has fewer, and does so correctly regardless of what any
+  // absolute pace target says (the target cancels out of that comparison).
+  function afternoonPaceTarget(iso: string): number {
+    return Number(iso.split('-')[2]) / 7;
+  }
+
   const ptLongShortWeek = options.ptLongShortWeek ?? false;
 
   // --- Group this month's weekdays by the Monday that starts their calendar week - computed up
@@ -163,7 +185,7 @@ export function generateSchedule(
     const d = new Date(year, month, day);
     const dow = d.getDay();
     if (dow === 0 || dow === 6) continue;
-    if (holidays.has(toISODate(d))) continue;
+    if (holidays.has(toISODate(d)) || closedDays.has(toISODate(d))) continue;
     const weekKey = toISODate(mondayOf(d));
     if (!weekdaysByWeekKey.has(weekKey)) weekdaysByWeekKey.set(weekKey, []);
     weekdaysByWeekKey.get(weekKey)!.push(d);
@@ -212,7 +234,12 @@ export function generateSchedule(
   for (let day = 1; day <= totalDays; day++) {
     const d = new Date(year, month, day);
     if (d.getDay() === 6) {
-      weekendPairs.push({ saturday: d, sunday: new Date(year, month, day + 1) });
+      const sunday = new Date(year, month, day + 1);
+      // If either day of the pair is a closed day, the whole weekend is skipped rather than
+      // trying to cover just one half of it - a closed Saturday realistically means a closed
+      // Sunday too.
+      if (closedDays.has(toISODate(d)) || closedDays.has(toISODate(sunday))) continue;
+      weekendPairs.push({ saturday: d, sunday });
     }
   }
 
@@ -381,6 +408,15 @@ export function generateSchedule(
     return weekendEmployeeByWeekKey.get(weekKey)?.has(employeeId) ?? false;
   }
 
+  // The calendar week right after this employee's own short (weekend) week - now that they work
+  // straight through Friday into the weekend, this is the only place a real break can still land
+  // before the following week would otherwise run right on into it.
+  function isPostWeekendRecoveryWeek(employeeId: string, weekKey: string): boolean {
+    const weekIndex = orderedWeekKeys.indexOf(weekKey);
+    if (weekIndex <= 0) return false;
+    return isShortWeek(employeeId, orderedWeekKeys[weekIndex - 1]);
+  }
+
   // --- Holidays: a public holiday falling on a weekday isn't a normal business day - instead of
   //     full morning+afternoon coverage, a single person covers it as a skeleton crew (already
   //     excluded from weekdaysByWeekKey above, so the fulltime/part-time machinery never sees these
@@ -401,6 +437,7 @@ export function generateSchedule(
     if (dow === 0 || dow === 6) continue;
     const iso = toISODate(d);
     if (!holidays.has(iso)) continue;
+    if (closedDays.has(iso)) continue; // closed outright - not even a skeleton crew
 
     // Someone already fixed this holiday by hand - it's already in `assignments` from the seed,
     // just needs crediting so fairness for the rest of the year's holidays stays accurate.
@@ -483,7 +520,12 @@ export function generateSchedule(
         (d) => !isUnavailable(empId, toISODate(d)) && !fixedDates.has(toISODate(d)),
       ).length;
       const cap = Math.min(5 - fixedThisWeek, availableCount);
-      capacity.set(wk, isShortWeek(empId, wk) ? Math.max(0, cap - shortWeekReduction) : cap);
+      const reduction = isShortWeek(empId, wk)
+        ? shortWeekReduction
+        : isPostWeekendRecoveryWeek(empId, wk)
+          ? FT_POST_WEEKEND_RECOVERY_DAYS
+          : 0;
+      capacity.set(wk, Math.max(0, cap - reduction));
     });
 
     const totalCapacity = [...capacity.values()].reduce((a, b) => a + b, 0);
@@ -528,15 +570,17 @@ export function generateSchedule(
       const available = weekdays.filter((d) => !isUnavailable(emp.id, toISODate(d)) && !fixedDates.has(toISODate(d)));
       const target = ftWeekTargets.get(emp.id)!.get(weekKey) ?? 0;
       const offCount = Math.max(0, available.length - target);
-      // The week this employee covers the weekend right after it always trims from the Friday
-      // side, no matter their usual alternating preference - that's the only day(s) off they get
-      // anywhere near a weekend to begin with (every other week normally has none at all, having
-      // been sized to their monthly target), so it needs to land immediately before the weekend
-      // to give any real break at all. Landing it on the Monday side instead (their normal
-      // odd-index preference) would leave them working straight through the weekend into the next
-      // full week with no break whatsoever. Any other week keeps the even/odd alternation, which
-      // is what keeps two fulltimers' days off from ever coinciding.
-      const trimFromEnd = isShortWeek(emp.id, weekKey) || empIndex % 2 === 0;
+      // The week this employee covers the weekend right after it always trims from the Monday
+      // side instead of their usual alternating preference, so Friday itself stays a working day
+      // for them - see the Friday-afternoon preference in the day-by-day split below, which
+      // depends on them actually being there that day. They still get a real break, it just lands
+      // at the start of the week instead of right before the weekend. The week right after that
+      // one also trims from the Monday side (see FT_POST_WEEKEND_RECOVERY_DAYS) so the break
+      // lands right after the weekend instead of nowhere at all, now that Friday-Saturday-Sunday
+      // runs straight into the following week otherwise. Any other week keeps the even/odd
+      // alternation, which is what keeps two fulltimers' days off from ever coinciding.
+      const trimFromEnd =
+        isShortWeek(emp.id, weekKey) || isPostWeekendRecoveryWeek(emp.id, weekKey) ? false : empIndex % 2 === 0;
       const kept =
         offCount === 0
           ? available
@@ -580,6 +624,9 @@ export function generateSchedule(
     weekdays.forEach((d) => {
       const iso = toISODate(d);
       const working = fulltime.filter((emp) => ftWorkingDates.get(emp.id)!.has(iso));
+      // Whoever covers the weekend right after this week ideally takes Friday afternoon too,
+      // leading straight into it - only meaningful on an actual Friday.
+      const isFriday = d.getDay() === 5;
 
       // Whoever this employee's own fixed kind is today, if any - `.find` rather than tracking
       // every kind is deliberate: fixing both a morning and afternoon for the same person the
@@ -660,9 +707,30 @@ export function generateSchedule(
           ftTakenSlots.add(`${iso}-${togetherKind}`);
           gaps.push({ date: iso, kind: gapKind });
         } else if (splitFirstMorning && splitSecondMorning) {
-          // Either split works - alternate for variety, same as when there's no restriction.
-          const morningEmp = ftFlipCounter % 2 === 0 ? first : second;
-          const afternoonEmp = morningEmp === first ? second : first;
+          // Either split works. On a Friday, whoever covers the weekend right after it takes
+          // priority for the afternoon - that's the one case this overrides the usual fairness
+          // tiebreak below, since leading straight into the weekend matters more than keeping the
+          // afternoon count perfectly even. Otherwise, give the afternoon to whoever currently has
+          // fewer of them, so afternoons stay balanced between the two instead of drifting toward
+          // whichever side the flip counter happens to favor over a run of similar days. Ties
+          // (most likely early in the month, before either has any afternoons yet) fall back to
+          // the flip counter for variety.
+          const firstHasWeekend = isFriday && isShortWeek(first.id, weekKey);
+          const secondHasWeekend = isFriday && isShortWeek(second.id, weekKey);
+          const firstAfternoons = afternoonCountSoFar(first.id);
+          const secondAfternoons = afternoonCountSoFar(second.id);
+          const afternoonEmp = firstHasWeekend
+            ? first
+            : secondHasWeekend
+              ? second
+              : firstAfternoons !== secondAfternoons
+                ? firstAfternoons < secondAfternoons
+                  ? first
+                  : second
+                : ftFlipCounter % 2 === 0
+                  ? first
+                  : second;
+          const morningEmp = afternoonEmp === first ? second : first;
           assignments.push({ date: iso, employeeId: morningEmp.id, shift: SHIFTS.fulltime.morning });
           assignments.push({ date: iso, employeeId: afternoonEmp.id, shift: SHIFTS.fulltime.afternoon });
           ftTakenSlots.add(`${iso}-morning`);
@@ -704,9 +772,13 @@ export function generateSchedule(
         }
         const canMorning = canWork(emp, 'morning');
         const canAfternoon = canWork(emp, 'afternoon');
-        const preferMorning = ftFlipCounter % 2 === 0;
+        // No second fulltimer today to compare against directly, so fall back to the simple
+        // "about one afternoon a week" pace to decide if this specific person is due for one -
+        // unless it's their own Friday leading into a weekend they cover, which wins outright.
+        const hasWeekendThisWeek = isFriday && isShortWeek(emp.id, weekKey);
+        const dueForAfternoon = hasWeekendThisWeek || afternoonCountSoFar(emp.id) < afternoonPaceTarget(iso);
         const kind: 'morning' | 'afternoon' | null =
-          canMorning && canAfternoon ? (preferMorning ? 'morning' : 'afternoon') : canMorning ? 'morning' : canAfternoon ? 'afternoon' : null;
+          canMorning && canAfternoon ? (dueForAfternoon ? 'afternoon' : 'morning') : canMorning ? 'morning' : canAfternoon ? 'afternoon' : null;
         if (kind) {
           const gapKind = kind === 'morning' ? 'afternoon' : 'morning';
           assignments.push({ date: iso, employeeId: emp.id, shift: SHIFTS.fulltime[kind] });
@@ -795,34 +867,64 @@ export function generateSchedule(
   //     still depends on their running hour total - once they're at the ~80h cap, further
   //     available days are simply left off instead of forced. ---
   if (parttime.length > 0 && ptLongShortWeek) {
-    // Since nobody can take a second shift the same day anymore (see assignPtSlot below), this
-    // reserved shift is the role-eligible part-timer's only chance to cover that date - so pick
-    // whichever kind fulltime actually left as a gap that day (when there's exactly one), instead
-    // of always defaulting to morning. Otherwise a person shows up for a support morning shift
-    // while the real gap (the afternoon) goes completely uncovered, purely because of which kind
-    // happened to be assigned first.
-    orderedWeekKeys.forEach((weekKey) => {
-      const weekdays = weekdaysByWeekKey.get(weekKey)!;
-      parttime.forEach((emp) => {
+    parttime.forEach((emp) => {
+      // Every day this employee's role allows them to work this month, in date order.
+      const roleDays: Date[] = [];
+      orderedWeekKeys.forEach((weekKey) => {
         const isLight = ptRoleIsLight(emp.id, weekKey);
         const allowedWeekdays = isLight ? PT_LIGHT_WEEKDAYS : PT_HEAVY_WEEKDAYS;
-        weekdays.forEach((d) => {
+        weekdaysByWeekKey.get(weekKey)!.forEach((d) => {
           const dow = (d.getDay() + 6) % 7; // Monday = 0
           if (!allowedWeekdays.has(dow)) return;
-          const iso = toISODate(d);
-          if (ptDatesWorked.get(emp.id)!.has(iso)) return; // already covered (e.g. a fixed shift)
-          const gapKindsThisDate = new Set(gaps.filter((g) => g.date === iso).map((g) => g.kind));
-          const kind: 'morning' | 'afternoon' =
-            gapKindsThisDate.has('afternoon') && !gapKindsThisDate.has('morning') ? 'afternoon' : 'morning';
-          if (ptTakenSlots.has(`${iso}-${kind}`)) return;
-          if (isUnavailableForKind(emp.id, iso, kind)) return;
-          const shiftHours = SHIFTS.parttime[kind].hours;
-          if ((ptHours.get(emp.id) ?? 0) + shiftHours > effectivePtCap(emp.id)) return;
-          assignments.push({ date: iso, employeeId: emp.id, shift: SHIFTS.parttime[kind] });
-          ptTakenSlots.add(`${iso}-${kind}`);
-          ptHours.set(emp.id, (ptHours.get(emp.id) ?? 0) + shiftHours);
-          ptDatesWorked.get(emp.id)!.add(iso);
+          if (ptDatesWorked.get(emp.id)!.has(toISODate(d))) return; // already covered (e.g. a fixed shift)
+          roleDays.push(d);
         });
+      });
+      if (roleDays.length === 0) return;
+
+      // Aim for full 8h days first - like standing in for fulltime for the day - and use at most
+      // one shorter 4h day to mop up whatever's left, instead of defaulting every role day to 4h
+      // and upgrading some later: fewer, longer support shifts for the same monthly total, and a
+      // similar count of each between the two part-timers since both work from the same target.
+      const budget = Math.max(0, effectivePtCap(emp.id) - (ptHours.get(emp.id) ?? 0));
+      const eightCount = Math.min(roleDays.length, Math.floor(budget / SHIFTS.fulltime.morning.hours));
+      const remainder = budget - eightCount * SHIFTS.fulltime.morning.hours;
+      const fourCount = eightCount < roleDays.length && remainder >= SHIFTS.parttime.morning.hours ? 1 : 0;
+      const workedCount = eightCount + fourCount;
+      if (workedCount === 0) return;
+
+      // Which role-eligible days actually get worked is spread evenly across the month (same
+      // idea as evenlySpacedIndices elsewhere), not just the earliest ones, so a lighter budget
+      // doesn't front-load all the work into the first couple of weeks and leave the rest empty.
+      const workedPositions = [...evenlySpacedIndices(roleDays.length, workedCount)].sort((a, b) => a - b);
+
+      workedPositions.forEach((pos, i) => {
+        const iso = toISODate(roleDays[pos]);
+        // Since nobody can take a second shift the same day, this is the role-eligible
+        // part-timer's only chance to cover that date - so pick whichever kind fulltime actually
+        // left as a gap (when there's exactly one), instead of always defaulting to morning.
+        // Otherwise a person shows up for a support morning shift while the real gap (the
+        // afternoon) goes completely uncovered, purely because of which kind was decided first.
+        // Failing that, if this person is overdue for an afternoon (about one a week is the
+        // target) and the afternoon slot happens to be free, take it proactively instead of
+        // defaulting to morning - otherwise long/short week's own default would leave part-timers
+        // with almost no afternoons at all. Only defaults to morning once neither of those apply,
+        // which is also the more useful shape (two people in the morning, one in the afternoon)
+        // on an otherwise fully-covered day.
+        const gapKindsThisDate = new Set(gaps.filter((g) => g.date === iso).map((g) => g.kind));
+        const afternoonIsGap = gapKindsThisDate.has('afternoon') && !gapKindsThisDate.has('morning');
+        const afternoonFree = !ftTakenSlots.has(`${iso}-afternoon`) && !ptTakenSlots.has(`${iso}-afternoon`);
+        const dueForAfternoon = afternoonCountSoFar(emp.id) < afternoonPaceTarget(iso);
+        const kind: 'morning' | 'afternoon' =
+          afternoonIsGap || (afternoonFree && dueForAfternoon) ? 'afternoon' : 'morning';
+        if (ptTakenSlots.has(`${iso}-${kind}`)) return;
+        if (isUnavailableForKind(emp.id, iso, kind)) return;
+        const shift = i < eightCount ? SHIFTS.fulltime[kind] : SHIFTS.parttime[kind];
+        if ((ptHours.get(emp.id) ?? 0) + shift.hours > effectivePtCap(emp.id)) return;
+        assignments.push({ date: iso, employeeId: emp.id, shift });
+        ptTakenSlots.add(`${iso}-${kind}`);
+        ptHours.set(emp.id, (ptHours.get(emp.id) ?? 0) + shift.hours);
+        ptDatesWorked.get(emp.id)!.add(iso);
       });
     });
   }
@@ -865,20 +967,47 @@ export function generateSchedule(
   if (parttime.length > 0 && !ptLongShortWeek) {
     const allWeekdays: Date[] = [];
     orderedWeekKeys.forEach((wk) => allWeekdays.push(...weekdaysByWeekKey.get(wk)!));
-    const shiftHours = SHIFTS.parttime.morning.hours;
+    const shiftHours = SHIFTS.parttime.morning.hours; // same for morning and afternoon
 
     parttime.forEach((emp) => {
       const cap = effectivePtCap(emp.id);
       for (const day of allWeekdays) {
         if ((ptHours.get(emp.id) ?? 0) + shiftHours > cap) break;
         const iso = toISODate(day);
-        if (isUnavailableForKind(emp.id, iso, 'morning') || ptDatesWorked.get(emp.id)!.has(iso)) continue;
+        if (ptDatesWorked.get(emp.id)!.has(iso)) continue;
+        // Default support shift is morning (fulltime is typically already there too - that
+        // overlap is fine), but if this person is overdue for an afternoon - or it's their own
+        // Friday leading into a weekend they cover - and the afternoon slot is actually free, take
+        // that instead. Otherwise a part-timer's afternoons stay near zero forever, since
+        // gap-filling is the only other place they'd ever get one.
+        const afternoonFree = !ftTakenSlots.has(`${iso}-afternoon`) && !ptTakenSlots.has(`${iso}-afternoon`);
+        const hasWeekendThisWeek = day.getDay() === 5 && isShortWeek(emp.id, toISODate(mondayOf(day)));
+        const dueForAfternoon = hasWeekendThisWeek || afternoonCountSoFar(emp.id) < afternoonPaceTarget(iso);
+        const kind: 'morning' | 'afternoon' = afternoonFree && dueForAfternoon ? 'afternoon' : 'morning';
+        if (isUnavailableForKind(emp.id, iso, kind)) continue;
         if (wouldExtendStreakTooFar(emp.id, day.getDate())) continue;
-        assignments.push({ date: iso, employeeId: emp.id, shift: SHIFTS.parttime.morning });
+        assignments.push({ date: iso, employeeId: emp.id, shift: SHIFTS.parttime[kind] });
+        if (kind === 'afternoon') ptTakenSlots.add(`${iso}-afternoon`);
         ptHours.set(emp.id, (ptHours.get(emp.id) ?? 0) + shiftHours);
         ptDatesWorked.get(emp.id)!.add(iso);
       }
     });
+  }
+
+  // Picks `count` positions out of `0..total-1`, spread as evenly as possible (e.g. total=9,
+  // count=4 -> {1,3,5,7}) rather than just the first `count` - used below so a part-timer's
+  // upgraded-to-8h shifts land spread across their whole month instead of bunched at its start.
+  function evenlySpacedIndices(total: number, count: number): Set<number> {
+    const selected = new Set<number>();
+    if (count <= 0 || total <= 0) return selected;
+    if (count >= total) {
+      for (let i = 0; i < total; i++) selected.add(i);
+      return selected;
+    }
+    for (let i = 0; i < count; i++) {
+      selected.add(Math.floor(((i + 0.5) * total) / count));
+    }
+    return selected;
   }
 
   // "Long/short week" catch-up: each part-timer's own already-scheduled weekday days get
@@ -889,12 +1018,16 @@ export function generateSchedule(
   // give the two part-timers the same number of days in a typical month, so this equalizes them
   // as a side effect; but it must target each person's own cap directly, since two people with
   // identical day counts would otherwise both already "be at the max" relative to each other and
-  // neither would ever get upgraded, even miles under the real 80h cap. Earliest days first, for
-  // consistency.
+  // neither would ever get upgraded, even miles under the real 80h cap. Which days get the 8h
+  // upgrade is spread evenly across the month (see evenlySpacedIndices) rather than always the
+  // earliest ones - a heavy first half and light second half isn't the point of the alternating
+  // heavy/light week pattern this mode is named after; a mix spread throughout it is.
   if (parttime.length > 0 && ptLongShortWeek) {
+    const perUpgradeHours = SHIFTS.fulltime.morning.hours - SHIFTS.parttime.morning.hours;
     parttime.forEach((emp) => {
       const target = effectivePtCap(emp.id);
-      if ((ptHours.get(emp.id) ?? 0) >= target) return;
+      const baseline = ptHours.get(emp.id) ?? 0;
+      if (baseline >= target || perUpgradeHours <= 0) return;
       const ownShiftIndexes = assignments
         .map((_, idx) => idx)
         .filter((idx) => {
@@ -905,17 +1038,18 @@ export function generateSchedule(
         })
         .sort((i1, i2) => assignments[i1].date.localeCompare(assignments[i2].date));
 
-      for (const idx of ownShiftIndexes) {
-        if ((ptHours.get(emp.id) ?? 0) >= target) break;
+      const upgradeCount = Math.min(ownShiftIndexes.length, Math.floor((target - baseline) / perUpgradeHours));
+      const upgradePositions = evenlySpacedIndices(ownShiftIndexes.length, upgradeCount);
+      upgradePositions.forEach((pos) => {
+        const idx = ownShiftIndexes[pos];
         const current = assignments[idx];
         const kind = current.shift.kind as 'morning' | 'afternoon';
         const longShift = SHIFTS.fulltime[kind];
-        if (current.shift.hours >= longShift.hours) continue; // already the long version
+        if (current.shift.hours >= longShift.hours) return; // already the long version
         const added = longShift.hours - current.shift.hours;
-        if ((ptHours.get(emp.id) ?? 0) + added > effectivePtCap(emp.id)) continue;
         assignments[idx] = { ...current, shift: longShift };
         ptHours.set(emp.id, (ptHours.get(emp.id) ?? 0) + added);
-      }
+      });
     });
   }
 
@@ -974,10 +1108,18 @@ export function generateSchedule(
       return assignments.filter((a) => a.employeeId === empId).reduce((sum, a) => sum + a.shift.hours, 0);
     }
 
-    // Tries to move `emp`'s weekday shift on `day` to whichever eligible same-type coworker in
-    // `candidates` is checked first (their existing round-robin order in `employees`) - returns
-    // whether a coworker was actually found and the swap made.
-    function trySwapDay(emp: Employee, day: number, candidates: Employee[], worked: Map<string, boolean[]>): boolean {
+    // Tries to move `emp`'s weekday shift on `day` to whichever eligible coworker in `candidates`
+    // is checked first (same-type coworkers first, a cross-type one only as a last resort - see
+    // the caller) - returns whether a coworker was actually found and the swap made. With
+    // `enforceCap` off, a candidate's own hour target/cap no longer rules them out - see the
+    // caller for when that's used.
+    function trySwapDay(
+      emp: Employee,
+      day: number,
+      candidates: Employee[],
+      worked: Map<string, boolean[]>,
+      enforceCap: boolean,
+    ): boolean {
       const iso = toISODate(new Date(year, month, day));
       const index = assignments.findIndex(
         (a) => a.employeeId === emp.id && a.date === iso && (a.shift.kind === 'morning' || a.shift.kind === 'afternoon'),
@@ -993,12 +1135,21 @@ export function generateSchedule(
         if (isUnavailableForKind(candidate.id, iso, kind)) continue;
         if (candidate.type === 'parttime' && !ptRoleAllowsDay(candidate.id, iso)) continue;
 
-        const newShift = SHIFTS[candidate.type][kind];
-        const projected = employeeHours(candidate.id) + newShift.hours;
-        if (candidate.type === 'parttime' && projected > effectivePtCap(candidate.id)) continue;
-        if (candidate.type === 'fulltime' && projected > effectiveFulltimeTarget(candidate.id) + FULLTIME_HOURS_TOLERANCE) continue;
+        // Keep whatever coverage was already there, regardless of who ends up covering it: a
+        // fulltime day handed to a part-timer stays a full 8h (they stand in for fulltime that
+        // day, same idea as long/short week's own 8h days), and a part-time day handed to a
+        // fulltime candidate stays at its original 4h instead of over-provisioning a day that
+        // never needed a full fulltime shift to begin with.
+        const newShift = SHIFTS[emp.type][kind];
+        if (enforceCap) {
+          const projected = employeeHours(candidate.id) + newShift.hours;
+          if (candidate.type === 'parttime' && projected > effectivePtCap(candidate.id)) continue;
+          if (candidate.type === 'fulltime' && projected > effectiveFulltimeTarget(candidate.id) + FULLTIME_HOURS_TOLERANCE) continue;
+        }
 
-        // Don't just hand the streak to someone who'd immediately have one of their own.
+        // Don't just hand the streak to someone who'd immediately have one of their own - this
+        // still applies even as a last resort, since trading one excessive streak for another
+        // isn't actually a fix.
         candidateDays[day] = true;
         const [cStart, cEnd] = runBounds(candidateDays, day);
         candidateDays[day] = false;
@@ -1012,7 +1163,12 @@ export function generateSchedule(
 
     employees.forEach((emp) => {
       const sameType = employees.filter((e) => e.id !== emp.id && e.type === emp.type);
-      if (sameType.length === 0) return;
+      const otherType = employees.filter((e) => e.id !== emp.id && e.type !== emp.type);
+      // A same-type coworker is the natural, preferred fix; a cross-type one (a part-timer
+      // standing in for a fulltime day, or vice versa) is only tried once every same-type option
+      // for that specific day is exhausted, since it's a bigger ask of their own schedule.
+      const candidates = [...sameType, ...otherType];
+      if (candidates.length === 0) return;
 
       // Each successful swap only ever shortens this employee's runs, never lengthens one, so a
       // bounded number of passes is enough - one swap per remaining over-threshold run, worst case.
@@ -1025,17 +1181,22 @@ export function generateSchedule(
 
         // Try days outward from the middle, so a successful fix roughly bisects the run into two
         // shorter pieces instead of just shaving one end of it.
-        let fixed = false;
-        for (let offset = 0; offset <= end - start && !fixed; offset++) {
-          const candidateDays = offset === 0 ? [middle] : [middle - offset, middle + offset];
-          for (const day of candidateDays) {
-            if (day < start || day > end) continue;
-            if (trySwapDay(emp, day, sameType, worked)) {
-              fixed = true;
-              break;
+        function trySwapAnyDay(enforceCap: boolean): boolean {
+          for (let offset = 0; offset <= end - start; offset++) {
+            const candidateDays = offset === 0 ? [middle] : [middle - offset, middle + offset];
+            for (const day of candidateDays) {
+              if (day < start || day > end) continue;
+              if (trySwapDay(emp, day, candidates, worked, enforceCap)) return true;
             }
           }
+          return false;
         }
+        // First choice respects everyone's own hour target/cap; if that leaves nobody able to
+        // take any day in the run (a small team can easily have everyone already near their own
+        // limit), an excessive streak is worse than someone quietly landing a bit over their
+        // target for one day - which still surfaces as its usual hours warning, so it stays
+        // visible and easy to correct by hand.
+        const fixed = trySwapAnyDay(true) || trySwapAnyDay(false);
         if (!fixed) break; // nobody in the team could take any day in this run - leave it as-is
       }
     });
@@ -1064,6 +1225,7 @@ export function computeWarnings(
   const totalDays = daysInMonth(year, month);
   const employeeById = new Map(employees.map((e) => [e.id, e]));
   const holidays = getCzechHolidays(year);
+  const closedDays = getClosedDays(year);
 
   // Informational reminder whenever someone has a shift on a public holiday - whether it's the
   // generator's own intentional single skeleton-crew assignment or a manually added extra one.
@@ -1150,6 +1312,9 @@ export function computeWarnings(
     const d = new Date(year, month, day);
     const dow = d.getDay();
     const iso = toISODate(d);
+    // The business is closed outright this day (Christmas Eve, New Year's Eve) - nothing is
+    // ever expected to be covered, so there's nothing missing to flag.
+    if (closedDays.has(iso)) continue;
     const dayAssignments = assignments.filter((a) => a.date === iso);
     if (dow === 0 || dow === 6) {
       if (!dayAssignments.some((a) => a.shift.kind === 'weekend')) {
