@@ -10,7 +10,13 @@ interface Props {
   employees: Employee[];
   assignments: Assignment[];
   unavailability: UnavailabilityMap;
-  onSetShiftHours: (date: string, employeeId: string, kind: ShiftDefinition['kind'], hours: number) => void;
+  onSetShiftHours: (
+    date: string,
+    employeeId: string,
+    kind: ShiftDefinition['kind'],
+    hours: number,
+    fixed: boolean,
+  ) => void;
   onToggleUnavailable: (employeeId: string, iso: string, kind?: AvailabilityKind) => void;
   highlightedDate?: string | null;
 }
@@ -61,6 +67,17 @@ function formatHours(hours: number): string {
   return hours.toFixed(1).replace('.', ',');
 }
 
+/** "8" / "8,5" edits the shift's hours; a trailing "!" (e.g. "8!") also locks it as fixed - the
+ * generator leaves a fixed shift alone on regenerate instead of overwriting it. */
+function parseHoursInput(raw: string): { hours: number; fixed: boolean } {
+  const trimmed = raw.trim();
+  const fixed = trimmed.endsWith('!');
+  const numeric = fixed ? trimmed.slice(0, -1).trim() : trimmed;
+  const parsed = parseFloat(numeric.replace(',', '.'));
+  const hours = Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+  return { hours, fixed: fixed && hours > 0 };
+}
+
 /** Whether this employee is marked unavailable for this specific cell - a plain weekday's R/O
  * cell checks just its own kind, while a whole-day cell (weekend/holiday, which has no
  * morning/afternoon split of its own) is only "unavailable" once both marks are set together,
@@ -80,20 +97,24 @@ function isMarkedUnavailable(
 
 interface HourInputProps {
   initialHours: number;
-  onCommit: (hours: number) => void;
+  initialFixed: boolean;
+  onCommit: (hours: number, fixed: boolean) => void;
   onCancel: () => void;
 }
 
-/** The whole editing UI for a cell: click a shift, type how many hours, done - no separate
- * popover, no time pickers. Committing happens on blur (including a blur triggered by Enter);
- * Escape cancels instead by flagging the blur that follows it to skip the commit. */
-function HourInput({ initialHours, onCommit, onCancel }: HourInputProps) {
-  const [value, setValue] = useState(initialHours > 0 ? formatHours(initialHours) : '');
+/** The whole editing UI for a cell: click a shift, type how many hours (optionally followed by
+ * "!" to lock it as fixed), done - no separate popover, no time pickers. Committing happens on
+ * blur (including a blur triggered by Enter); Escape cancels instead by flagging the blur that
+ * follows it to skip the commit. */
+function HourInput({ initialHours, initialFixed, onCommit, onCancel }: HourInputProps) {
+  const [value, setValue] = useState(
+    initialHours > 0 ? `${formatHours(initialHours)}${initialFixed ? '!' : ''}` : '',
+  );
   const cancelledRef = useRef(false);
 
   function commit() {
-    const parsed = parseFloat(value.replace(',', '.'));
-    onCommit(Number.isFinite(parsed) ? Math.max(0, parsed) : 0);
+    const { hours, fixed } = parseHoursInput(value);
+    onCommit(hours, fixed);
   }
 
   return (
@@ -149,9 +170,11 @@ export function CalendarGrid({
   } | null>(null);
 
   const hoursByCellKind = new Map<string, number>();
+  const fixedByCellKind = new Map<string, boolean>();
   assignments.forEach((a) => {
     const k = `${a.date}|${a.employeeId}|${a.shift.kind}`;
     hoursByCellKind.set(k, (hoursByCellKind.get(k) ?? 0) + a.shift.hours);
+    if (a.shift.fixed) fixedByCellKind.set(k, true);
   });
 
   const totalHoursByEmployee = new Map<string, number>();
@@ -163,8 +186,9 @@ export function CalendarGrid({
     <section className="panel calendar-panel">
       <h2>Rozvrh</h2>
       <p className="muted">
-        Klikněte na políčko a napište počet odpracovaných hodin (0 nebo prázdné pole směnu odebere). Pravým
-        tlačítkem označte, kdy daný člověk nemůže pracovat - generátor to bude respektovat.
+        Klikněte na políčko a napište počet odpracovaných hodin (0 nebo prázdné pole směnu odebere). Číslo s
+        vykřičníkem (např. 8!) směnu zafixuje - při přegenerování rozvrhu ji generátor nepřepíše. Pravým tlačítkem
+        označte, kdy daný člověk nemůže pracovat - generátor to bude respektovat.
       </p>
       <div className="schedule-scroll">
         <table className="schedule-table">
@@ -219,7 +243,9 @@ export function CalendarGrid({
                   const isToday = info.iso === todayIso;
                   const isHighlighted = info.iso === highlightedDate;
                   return kindsFor(info).map((kind, kindIdx) => {
-                    const hours = hoursByCellKind.get(`${info.iso}|${emp.id}|${kind}`) ?? 0;
+                    const cellKey = `${info.iso}|${emp.id}|${kind}`;
+                    const hours = hoursByCellKind.get(cellKey) ?? 0;
+                    const isFixed = fixedByCellKind.get(cellKey) ?? false;
                     const unavailable = isMarkedUnavailable(unavailability, emp.id, info.iso, kind);
                     const isEditing =
                       editingCell?.date === info.iso &&
@@ -233,8 +259,9 @@ export function CalendarGrid({
                         {isEditing ? (
                           <HourInput
                             initialHours={hours > 0 ? hours : shiftForKind(emp, kind).hours}
-                            onCommit={(value) => {
-                              onSetShiftHours(info.iso, emp.id, kind, value);
+                            initialFixed={isFixed}
+                            onCommit={(value, fixed) => {
+                              onSetShiftHours(info.iso, emp.id, kind, value, fixed);
                               setEditingCell(null);
                             }}
                             onCancel={() => setEditingCell(null)}
@@ -242,8 +269,8 @@ export function CalendarGrid({
                         ) : (
                           <button
                             type="button"
-                            className={`schedule-cell${hours > 0 ? ' filled' : ''}${kind === 'afternoon' && hours > 0 ? ' afternoon' : ''}${unavailable ? ' unavailable' : ''}`}
-                            title={`${emp.name}, ${info.date.getDate()}. ${month + 1}. – ${SHIFT_LABELS[kind]}${hours > 0 ? ` – ${hours.toFixed(1)} h` : ''}${unavailable ? ' – nedostupný (pravé tlačítko zruší)' : ' – pravé tlačítko označí jako nedostupný'}`}
+                            className={`schedule-cell${hours > 0 ? ' filled' : ''}${kind === 'afternoon' && hours > 0 ? ' afternoon' : ''}${unavailable ? ' unavailable' : ''}${isFixed ? ' fixed' : ''}`}
+                            title={`${emp.name}, ${info.date.getDate()}. ${month + 1}. – ${SHIFT_LABELS[kind]}${hours > 0 ? ` – ${hours.toFixed(1)} h` : ''}${isFixed ? ' (pevná směna)' : ''}${unavailable ? ' – nedostupný (pravé tlačítko zruší)' : ' – pravé tlačítko označí jako nedostupný'}`}
                             onClick={() => setEditingCell({ date: info.iso, employeeId: emp.id, kind })}
                             onContextMenu={(e) => {
                               e.preventDefault();
@@ -254,7 +281,7 @@ export function CalendarGrid({
                               );
                             }}
                           >
-                            {hours > 0 ? formatHours(hours) : ''}
+                            {hours > 0 ? `${formatHours(hours)}${isFixed ? '!' : ''}` : ''}
                           </button>
                         )}
                       </td>

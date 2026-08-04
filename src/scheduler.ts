@@ -58,7 +58,11 @@ function clamp(value: number, min: number, max: number): number {
  * this month take that history into account: whoever had the weekend last month is deprioritized
  * (not excluded) this month, and fulltime/part-time hour targets are nudged to compensate for
  * whichever direction they missed by last time, so a two-month pair averages out closer to the
- * nominal target/cap than either month chasing it in isolation would. */
+ * nominal target/cap than either month chasing it in isolation would.
+ * `existingAssignments` (this month's own assignments, before regenerating) contributes its
+ * `fixed` entries - shifts manually locked in (typed as e.g. "8!" in the schedule table) - which
+ * survive regeneration untouched instead of being wiped along with everything else; the rest of
+ * this month is then built to fit around them. */
 export function generateSchedule(
   year: number,
   month: number,
@@ -66,12 +70,32 @@ export function generateSchedule(
   unavailability: UnavailabilityMap = {},
   options: ScheduleOptions = {},
   previousAssignments: Assignment[] = [],
+  existingAssignments: Assignment[] = [],
 ): Assignment[] {
   const assignments: Assignment[] = [];
   const fulltime = employees.filter((e) => e.type === 'fulltime');
   const parttime = employees.filter((e) => e.type === 'parttime');
   const totalDays = daysInMonth(year, month);
   const monthIndex = year * 12 + month;
+
+  // Fixed assignments are seeded first and never touched again - every phase below treats their
+  // date/employee/kind as already spoken for and folds their hours into the relevant
+  // fairness/target bookkeeping, so the rest of the month is built to fit around them.
+  const fixedAssignments = existingAssignments.filter((a) => a.shift.fixed);
+  assignments.push(...fixedAssignments);
+
+  const fixedDatesByEmployee = new Map<string, Set<string>>();
+  employees.forEach((e) => fixedDatesByEmployee.set(e.id, new Set()));
+  fixedAssignments.forEach((a) => fixedDatesByEmployee.get(a.employeeId)?.add(a.date));
+
+  // Only weekday (morning/afternoon) fixed hours need to reduce the fulltime week-target math
+  // below - fixed weekend hours already flow through `weekendHoursByEmployee` (computed straight
+  // off `assignments`, which already contains the fixed ones by the time that runs).
+  const fixedWeekdayHoursByEmployee = new Map<string, number>();
+  fixedAssignments.forEach((a) => {
+    if (a.shift.kind !== 'morning' && a.shift.kind !== 'afternoon') return;
+    fixedWeekdayHoursByEmployee.set(a.employeeId, (fixedWeekdayHoursByEmployee.get(a.employeeId) ?? 0) + a.shift.hours);
+  });
 
   // What actually happened last month, straight off its real assignments (manual edits included)
   // rather than anything re-derived, so this reacts to what truly happened, not just what was
@@ -212,6 +236,41 @@ export function generateSchedule(
     const satIsos = weekendPairs.map((p) => toISODate(p.saturday));
     const sunIsos = weekendPairs.map((p) => toISODate(p.sunday));
 
+    const weekendCredits = new Map<string, number>();
+    employees.forEach((e) => weekendCredits.set(e.id, 0));
+
+    function assignPair(pairIdx: number, emp: Employee): void {
+      const weekKey = toISODate(mondayOf(weekendPairs[pairIdx].saturday));
+      // A fixed pair may already have one (or both) of its two days seeded from
+      // `fixedAssignments` - only add whichever day isn't already there instead of duplicating it.
+      if (!assignments.some((a) => a.employeeId === emp.id && a.date === satIsos[pairIdx] && a.shift.kind === 'weekend')) {
+        assignments.push({ date: satIsos[pairIdx], employeeId: emp.id, shift: WEEKEND_SHIFT });
+      }
+      if (!assignments.some((a) => a.employeeId === emp.id && a.date === sunIsos[pairIdx] && a.shift.kind === 'weekend')) {
+        assignments.push({ date: sunIsos[pairIdx], employeeId: emp.id, shift: WEEKEND_SHIFT });
+      }
+      if (!weekendEmployeeByWeekKey.has(weekKey)) weekendEmployeeByWeekKey.set(weekKey, new Set());
+      weekendEmployeeByWeekKey.get(weekKey)!.add(emp.id);
+      weekendCredits.set(emp.id, weekendCredits.get(emp.id)! + 1);
+    }
+
+    // A pair with either day fixed by hand is settled immediately and removed from the matching
+    // pool below - the matching only needs to worry about pairs that are actually still open.
+    const fixedPairIndexes = new Set<number>();
+    const fixedWeekendEmployeeIds = new Set<string>();
+    weekendPairs.forEach((_, idx) => {
+      const fixedHere = fixedAssignments.find(
+        (a) => a.shift.kind === 'weekend' && (a.date === satIsos[idx] || a.date === sunIsos[idx]),
+      );
+      if (!fixedHere) return;
+      const emp = employees.find((e) => e.id === fixedHere.employeeId);
+      if (!emp) return;
+      fixedPairIndexes.add(idx);
+      fixedWeekendEmployeeIds.add(emp.id);
+      assignPair(idx, emp);
+    });
+    const openPairIndexes = weekendPairs.map((_, idx) => idx).filter((idx) => !fixedPairIndexes.has(idx));
+
     // Preferred candidate order per pair (round-robin), so the matching still favors the usual
     // rotation whenever there's no conflict forcing a swap. Whoever had the weekend last month is
     // moved toward the back of each pair's preference (stable sort keeps everyone else's relative
@@ -228,7 +287,12 @@ export function generateSchedule(
     });
 
     const availableIgnoringRole = (pairIdx: number, empIdx: number): boolean =>
-      !isUnavailable(employees[empIdx].id, satIsos[pairIdx]) && !isUnavailable(employees[empIdx].id, sunIsos[pairIdx]);
+      // Someone with an already-fixed weekend elsewhere this month isn't a candidate for a
+      // *different* pair too - they're already spoken for, and piling a second one on them while
+      // someone else might still need their turn would undercut the whole rotation.
+      !fixedWeekendEmployeeIds.has(employees[empIdx].id) &&
+      !isUnavailable(employees[empIdx].id, satIsos[pairIdx]) &&
+      !isUnavailable(employees[empIdx].id, sunIsos[pairIdx]);
 
     // In "long/short week" mode, a part-timer can only take a weekend during their own *heavy*
     // week (Mon/Tue/Fri) - that week becomes a genuine "long week" (Mon/Tue/Fri plus the
@@ -262,29 +326,17 @@ export function generateSchedule(
       return false;
     }
 
-    for (let pairIdx = 0; pairIdx < m; pairIdx++) {
+    for (const pairIdx of openPairIndexes) {
       tryAugment(pairIdx, new Array(n).fill(false));
     }
 
-    const weekendCredits = new Map<string, number>();
-    employees.forEach((e) => weekendCredits.set(e.id, 0));
-
-    function assignPair(pairIdx: number, emp: Employee): void {
-      const weekKey = toISODate(mondayOf(weekendPairs[pairIdx].saturday));
-      assignments.push({ date: satIsos[pairIdx], employeeId: emp.id, shift: WEEKEND_SHIFT });
-      assignments.push({ date: sunIsos[pairIdx], employeeId: emp.id, shift: WEEKEND_SHIFT });
-      if (!weekendEmployeeByWeekKey.has(weekKey)) weekendEmployeeByWeekKey.set(weekKey, new Set());
-      weekendEmployeeByWeekKey.get(weekKey)!.add(emp.id);
-      weekendCredits.set(emp.id, weekendCredits.get(emp.id)! + 1);
-    }
-
-    for (let pairIdx = 0; pairIdx < m; pairIdx++) {
+    for (const pairIdx of openPairIndexes) {
       if (matchEmployeeOfPair[pairIdx] !== -1) assignPair(pairIdx, employees[matchEmployeeOfPair[pairIdx]]);
     }
 
     // Any pair the matching couldn't cover (genuine overflow, or nobody free either day) falls
     // back to whoever currently has the fewest weekend turns credited so far.
-    for (let pairIdx = 0; pairIdx < m; pairIdx++) {
+    for (const pairIdx of openPairIndexes) {
       if (matchEmployeeOfPair[pairIdx] !== -1) continue;
       let best: Employee | undefined;
       let bestCredits = Infinity;
@@ -350,6 +402,14 @@ export function generateSchedule(
     const iso = toISODate(d);
     if (!holidays.has(iso)) continue;
 
+    // Someone already fixed this holiday by hand - it's already in `assignments` from the seed,
+    // just needs crediting so fairness for the rest of the year's holidays stays accurate.
+    const fixedHere = fixedAssignments.find((a) => a.date === iso && a.shift.kind === 'holiday');
+    if (fixedHere) {
+      holidayCredits.set(fixedHere.employeeId, (holidayCredits.get(fixedHere.employeeId) ?? 0) + 1);
+      continue;
+    }
+
     const pickBest = (candidates: Employee[]): Employee | undefined => {
       let best: Employee | undefined;
       let bestCredits = Infinity;
@@ -407,13 +467,22 @@ export function generateSchedule(
     shortWeekReduction: number,
   ): Map<string, number> {
     const weekendHours = weekendHoursByEmployee.get(empId) ?? 0;
-    const idealTotalDays = Math.max(0, targetHours - weekendHours) / shiftHours;
+    const fixedHours = fixedWeekdayHoursByEmployee.get(empId) ?? 0;
+    const idealTotalDays = Math.max(0, targetHours - weekendHours - fixedHours) / shiftHours;
     const totalTargetDays = Math.round(idealTotalDays);
 
+    // A day already fixed by hand isn't available for the trim-to-target logic below to trade
+    // away - it's guaranteed regardless, so it comes out of both the week's capacity and its
+    // available-day count up front.
+    const fixedDates = fixedDatesByEmployee.get(empId) ?? new Set<string>();
     const capacity = new Map<string, number>();
     orderedWeekKeys.forEach((wk) => {
-      const availableCount = weekdaysByWeekKey.get(wk)!.filter((d) => !isUnavailable(empId, toISODate(d))).length;
-      const cap = Math.min(5, availableCount);
+      const weekdays = weekdaysByWeekKey.get(wk)!;
+      const fixedThisWeek = weekdays.filter((d) => fixedDates.has(toISODate(d))).length;
+      const availableCount = weekdays.filter(
+        (d) => !isUnavailable(empId, toISODate(d)) && !fixedDates.has(toISODate(d)),
+      ).length;
+      const cap = Math.min(5 - fixedThisWeek, availableCount);
       capacity.set(wk, isShortWeek(empId, wk) ? Math.max(0, cap - shortWeekReduction) : cap);
     });
 
@@ -455,7 +524,8 @@ export function generateSchedule(
   orderedWeekKeys.forEach((weekKey) => {
     const weekdays = weekdaysByWeekKey.get(weekKey)!;
     fulltime.forEach((emp, empIndex) => {
-      const available = weekdays.filter((d) => !isUnavailable(emp.id, toISODate(d)));
+      const fixedDates = fixedDatesByEmployee.get(emp.id) ?? new Set<string>();
+      const available = weekdays.filter((d) => !isUnavailable(emp.id, toISODate(d)) && !fixedDates.has(toISODate(d)));
       const target = ftWeekTargets.get(emp.id)!.get(weekKey) ?? 0;
       const offCount = Math.max(0, available.length - target);
       // The week this employee covers the weekend right after it always trims from the Friday
@@ -475,6 +545,11 @@ export function generateSchedule(
             : available.slice(offCount);
       const set = ftWorkingDates.get(emp.id)!;
       kept.forEach((d) => set.add(toISODate(d)));
+      // A fixed day is guaranteed regardless of what the trim above decided - it was already
+      // excluded from `available` so it can't have been trimmed away, this just adds it in.
+      weekdays.forEach((d) => {
+        if (fixedDates.has(toISODate(d))) set.add(toISODate(d));
+      });
     });
   });
 
@@ -505,10 +580,59 @@ export function generateSchedule(
     weekdays.forEach((d) => {
       const iso = toISODate(d);
       const working = fulltime.filter((emp) => ftWorkingDates.get(emp.id)!.has(iso));
-      const canWork = (emp: Employee, kind: 'morning' | 'afternoon') => !isUnavailableForKind(emp.id, iso, kind);
+
+      // Whoever this employee's own fixed kind is today, if any - `.find` rather than tracking
+      // every kind is deliberate: fixing both a morning and afternoon for the same person the
+      // same day isn't a pattern this supports specially, though nothing here corrupts data if
+      // it happens (both stay seeded in `assignments` either way).
+      const fixedKindFor = (empId: string): 'morning' | 'afternoon' | null => {
+        const fixed = fixedAssignments.find(
+          (a) => a.employeeId === empId && a.date === iso && (a.shift.kind === 'morning' || a.shift.kind === 'afternoon'),
+        );
+        return fixed ? (fixed.shift.kind as 'morning' | 'afternoon') : null;
+      };
+      // Afternoon only ever has one person on duty (same rule part-time's own gap-filling
+      // respects) - if anyone (fulltime or part-time) already has a fixed afternoon today,
+      // afternoon is off the table for everyone else, fulltime included.
+      const fixedAfternoonOwner = fixedAssignments.find((a) => a.date === iso && a.shift.kind === 'afternoon')?.employeeId;
+      const canWork = (emp: Employee, kind: 'morning' | 'afternoon') => {
+        if (isUnavailableForKind(emp.id, iso, kind)) return false;
+        if (kind === 'afternoon' && fixedAfternoonOwner && fixedAfternoonOwner !== emp.id) return false;
+        return true;
+      };
 
       if (working.length >= 2) {
         const [first, second] = working;
+        const firstFixedKind = fixedKindFor(first.id);
+        const secondFixedKind = fixedKindFor(second.id);
+
+        if (firstFixedKind || secondFixedKind) {
+          // At least one of today's two fulltimers is locked in already (and already seeded into
+          // `assignments`) - respect it exactly and just decide whoever's left, instead of
+          // re-deciding the day from scratch.
+          if (firstFixedKind && secondFixedKind) {
+            ftTakenSlots.add(`${iso}-${firstFixedKind}`);
+            ftTakenSlots.add(`${iso}-${secondFixedKind}`);
+            if (firstFixedKind === secondFixedKind) {
+              gaps.push({ date: iso, kind: firstFixedKind === 'morning' ? 'afternoon' : 'morning' });
+            }
+          } else {
+            const lockedEmp = firstFixedKind ? first : second;
+            const lockedKind = (firstFixedKind ?? secondFixedKind)!;
+            const otherEmp = lockedEmp === first ? second : first;
+            const remainingKind: 'morning' | 'afternoon' = lockedKind === 'morning' ? 'afternoon' : 'morning';
+            ftTakenSlots.add(`${iso}-${lockedKind}`);
+            if (canWork(otherEmp, remainingKind)) {
+              assignments.push({ date: iso, employeeId: otherEmp.id, shift: SHIFTS.fulltime[remainingKind] });
+              ftTakenSlots.add(`${iso}-${remainingKind}`);
+            } else {
+              gaps.push({ date: iso, kind: remainingKind });
+            }
+          }
+          ftFlipCounter++;
+          return;
+        }
+
         const firstM = canWork(first, 'morning');
         const firstA = canWork(first, 'afternoon');
         const secondM = canWork(second, 'morning');
@@ -551,7 +675,7 @@ export function generateSchedule(
           assignments.push({ date: iso, employeeId: afternoonEmp.id, shift: SHIFTS.fulltime.afternoon });
           ftTakenSlots.add(`${iso}-morning`);
           ftTakenSlots.add(`${iso}-afternoon`);
-        } else {
+        } else if (firstM || firstA || secondM || secondA) {
           // Both are restricted to the same single kind this day (rare) - only one of them can
           // actually be used, so fall back to treating it like a lone worker.
           const solo = firstM || firstA ? first : second;
@@ -560,19 +684,39 @@ export function generateSchedule(
           assignments.push({ date: iso, employeeId: solo.id, shift: SHIFTS.fulltime[soloKind] });
           ftTakenSlots.add(`${iso}-${soloKind}`);
           gaps.push({ date: iso, kind: gapKind });
+        } else {
+          // Neither can work either kind (e.g. both blocked from the only open kind by someone
+          // else's fixed afternoon) - the day is a genuine gap on both sides.
+          gaps.push({ date: iso, kind: 'morning' });
+          gaps.push({ date: iso, kind: 'afternoon' });
         }
         ftFlipCounter++;
       } else if (working.length === 1) {
         const emp = working[0];
+        const fixedKind = fixedKindFor(emp.id);
+        if (fixedKind) {
+          // Already locked in and already in `assignments` from the seed - just record the
+          // complementary gap for part-time, same as the normal solo-worker path does.
+          ftTakenSlots.add(`${iso}-${fixedKind}`);
+          gaps.push({ date: iso, kind: fixedKind === 'morning' ? 'afternoon' : 'morning' });
+          ftFlipCounter++;
+          return;
+        }
         const canMorning = canWork(emp, 'morning');
         const canAfternoon = canWork(emp, 'afternoon');
         const preferMorning = ftFlipCounter % 2 === 0;
-        const kind: 'morning' | 'afternoon' =
-          canMorning && canAfternoon ? (preferMorning ? 'morning' : 'afternoon') : canMorning ? 'morning' : 'afternoon';
-        const gapKind = kind === 'morning' ? 'afternoon' : 'morning';
-        assignments.push({ date: iso, employeeId: emp.id, shift: SHIFTS.fulltime[kind] });
-        ftTakenSlots.add(`${iso}-${kind}`);
-        gaps.push({ date: iso, kind: gapKind });
+        const kind: 'morning' | 'afternoon' | null =
+          canMorning && canAfternoon ? (preferMorning ? 'morning' : 'afternoon') : canMorning ? 'morning' : canAfternoon ? 'afternoon' : null;
+        if (kind) {
+          const gapKind = kind === 'morning' ? 'afternoon' : 'morning';
+          assignments.push({ date: iso, employeeId: emp.id, shift: SHIFTS.fulltime[kind] });
+          ftTakenSlots.add(`${iso}-${kind}`);
+          gaps.push({ date: iso, kind: gapKind });
+        } else {
+          // Blocked from the only kind still open (someone else's fixed afternoon) - genuine gap.
+          gaps.push({ date: iso, kind: 'morning' });
+          gaps.push({ date: iso, kind: 'afternoon' });
+        }
         ftFlipCounter++;
       } else {
         gaps.push({ date: iso, kind: 'morning' });
@@ -592,6 +736,14 @@ export function generateSchedule(
   const ptTakenSlots = new Set<string>(); // `${date}-${kind}`, prevents double-booking two part-timers on one slot
   const ptDatesWorked = new Map<string, Set<string>>(); // employeeId -> dates they already have a shift on
   parttime.forEach((emp) => ptDatesWorked.set(emp.id, new Set()));
+
+  // Seed both from whatever's already fixed, so nothing below double-books a slot or day a fixed
+  // part-time shift already covers.
+  fixedAssignments.forEach((a) => {
+    if (!ptDatesWorked.has(a.employeeId)) return;
+    if (a.shift.kind === 'morning' || a.shift.kind === 'afternoon') ptTakenSlots.add(`${a.date}-${a.shift.kind}`);
+    ptDatesWorked.get(a.employeeId)!.add(a.date);
+  });
 
   function assignPtSlot(date: string, kind: 'morning' | 'afternoon', enforceCap: boolean): boolean {
     const slotKey = `${date}-${kind}`;
@@ -658,9 +810,11 @@ export function generateSchedule(
           const dow = (d.getDay() + 6) % 7; // Monday = 0
           if (!allowedWeekdays.has(dow)) return;
           const iso = toISODate(d);
+          if (ptDatesWorked.get(emp.id)!.has(iso)) return; // already covered (e.g. a fixed shift)
           const gapKindsThisDate = new Set(gaps.filter((g) => g.date === iso).map((g) => g.kind));
           const kind: 'morning' | 'afternoon' =
             gapKindsThisDate.has('afternoon') && !gapKindsThisDate.has('morning') ? 'afternoon' : 'morning';
+          if (ptTakenSlots.has(`${iso}-${kind}`)) return;
           if (isUnavailableForKind(emp.id, iso, kind)) return;
           const shiftHours = SHIFTS.parttime[kind].hours;
           if ((ptHours.get(emp.id) ?? 0) + shiftHours > effectivePtCap(emp.id)) return;
@@ -745,7 +899,9 @@ export function generateSchedule(
         .map((_, idx) => idx)
         .filter((idx) => {
           const a = assignments[idx];
-          return a.employeeId === emp.id && (a.shift.kind === 'morning' || a.shift.kind === 'afternoon');
+          // A fixed shift's hours are exactly what was manually locked in - upgrading it here
+          // would silently override that.
+          return a.employeeId === emp.id && (a.shift.kind === 'morning' || a.shift.kind === 'afternoon') && !a.shift.fixed;
         })
         .sort((i1, i2) => assignments[i1].date.localeCompare(assignments[i2].date));
 
@@ -826,7 +982,9 @@ export function generateSchedule(
       const index = assignments.findIndex(
         (a) => a.employeeId === emp.id && a.date === iso && (a.shift.kind === 'morning' || a.shift.kind === 'afternoon'),
       );
-      if (index === -1) return false;
+      // A fixed shift was manually locked in on purpose - never hand it to someone else just to
+      // smooth out a streak, that's the lowest-priority rule in this whole function.
+      if (index === -1 || assignments[index].shift.fixed) return false;
       const kind = assignments[index].shift.kind as 'morning' | 'afternoon';
 
       for (const candidate of candidates) {

@@ -980,6 +980,12 @@ select {
   background: rgba(100, 116, 139, 0.35);
 }
 
+/* A gold ring, not a fill, so it layers cleanly over whatever background (afternoon blue,
+   unavailable gray) the cell already has instead of fighting it for attention. */
+.schedule-cell.fixed {
+  box-shadow: inset 0 0 0 2px var(--gold);
+}
+
 .schedule-cell-input {
   width: 100%;
   height: 38px;

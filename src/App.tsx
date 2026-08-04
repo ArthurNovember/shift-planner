@@ -273,7 +273,7 @@ function AppContent() {
     const hadExisting = assignments.length > 0;
     if (hadExisting) {
       const confirmed = window.confirm(
-        "Pro tento měsíc už existuje rozvrh. Vygenerovat znovu a přepsat ruční úpravy?",
+        "Pro tento měsíc už existuje rozvrh. Vygenerovat znovu? Pevně nastavené směny (např. 8!) zůstanou zachované, ostatní ruční úpravy budou přepsány.",
       );
       if (!confirmed) return;
     }
@@ -289,6 +289,7 @@ function AppContent() {
         unavailability,
         { ptLongShortWeek },
         previousAssignments,
+        assignments,
       ),
     );
     appendHistory(key, hadExisting ? "Rozvrh byl vygenerován znovu." : "Rozvrh byl vygenerován.");
@@ -378,13 +379,15 @@ function AppContent() {
   }
 
   // The whole schedule is edited through one move: click a day/employee/shift-kind cell, type
-  // an hours number (0 or empty removes it). Start/end time always comes from the standard
-  // template for that employee+kind - there's no per-shift custom time editing anymore.
+  // an hours number (0 or empty removes it, a trailing "!" locks it as fixed). Start/end time
+  // always comes from the standard template for that employee+kind - there's no per-shift custom
+  // time editing anymore.
   function handleSetShiftHours(
     date: string,
     employeeId: string,
     kind: ShiftDefinition["kind"],
     hours: number,
+    fixed: boolean,
   ) {
     const employee = employees.find((e) => e.id === employeeId);
     if (!employee) return;
@@ -402,18 +405,19 @@ function AppContent() {
       return;
     }
 
-    const shift = { ...shiftForEmployee(employee, kind), hours };
+    const shift = { ...shiftForEmployee(employee, kind), hours, fixed };
+    const fixedSuffix = fixed ? " (pevná)" : "";
     if (existingIndex === -1) {
       setAssignments([...assignments, { date, employeeId, shift }]);
       appendHistory(
         key,
-        `Přidána směna: ${employee.name}, ${formatHistoryDay(date)} (${SHIFT_KIND_LABELS[kind]}, ${hours} h).`,
+        `Přidána směna: ${employee.name}, ${formatHistoryDay(date)} (${SHIFT_KIND_LABELS[kind]}, ${hours} h)${fixedSuffix}.`,
       );
     } else {
       setAssignments(assignments.map((a, i) => (i === existingIndex ? { ...a, shift } : a)));
       appendHistory(
         key,
-        `Upravena směna: ${employee.name}, ${formatHistoryDay(date)} (${SHIFT_KIND_LABELS[kind]}) na ${hours} h.`,
+        `Upravena směna: ${employee.name}, ${formatHistoryDay(date)} (${SHIFT_KIND_LABELS[kind]}) na ${hours} h${fixedSuffix}.`,
       );
     }
   }

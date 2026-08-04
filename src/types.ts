@@ -22,6 +22,10 @@ export interface ShiftDefinition {
    * (either the shift is 6h or under, or it's over 6h but the break was manually removed/never
    * added - see the "+ oběd"/"− oběd" toggle in CalendarGrid). */
   breakMinutes?: number;
+  /** Manually locked in before generating (typed as e.g. "8!" in the schedule table) - the
+   * generator treats it as already spoken for and builds the rest of the month around it instead
+   * of overwriting it on regenerate. */
+  fixed?: boolean;
 }
 
 export interface Assignment {
