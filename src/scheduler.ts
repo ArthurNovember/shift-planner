@@ -602,8 +602,16 @@ export function generateSchedule(
   // date - if that happens and at least one of them is actually free that day, pull them back
   // in rather than leaving the day to part-time alone (part-time morning ends at 13:00 and
   // afternoon doesn't start until 16:00, so a fulltime-free day leaves a real gap in between).
+  // Skipped for a week where someone's short/recovery week deliberately reduced their days,
+  // though - that's the one case both being off the same day is expected, not a coincidence to
+  // patch, and patching it would silently re-add the very day the reduction was trying to
+  // remove, pushing hours right back past the monthly target it was computed against.
   if (fulltime.length >= 2) {
     orderedWeekKeys.forEach((weekKey) => {
+      const deliberateRestThisWeek = fulltime.some(
+        (emp) => isShortWeek(emp.id, weekKey) || isPostWeekendRecoveryWeek(emp.id, weekKey),
+      );
+      if (deliberateRestThisWeek) return;
       weekdaysByWeekKey.get(weekKey)!.forEach((d) => {
         const iso = toISODate(d);
         const anyWorking = fulltime.some((emp) => ftWorkingDates.get(emp.id)!.has(iso));
