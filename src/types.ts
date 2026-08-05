@@ -90,9 +90,12 @@ export const FULLTIME_TARGET_HOURS = 160;
  * cap warning. */
 export const FULLTIME_HOURS_TOLERANCE = 5;
 
-/** A week where the employee covers the weekend (~19h) gets this many fewer weekday shifts,
- * to balance out that extra weekend load and give them a real rest around it. */
-export const FT_SHORT_WEEK_REDUCTION = 2;
+/** A week where the employee covers the weekend (~19h) gets this many fewer weekday shifts, to
+ * give them a real rest before it. Paired with FT_POST_WEEKEND_RECOVERY_DAYS for a break on both
+ * sides of the weekend; kept at 1 (not 2) so the two together total 2 days, matching what a single
+ * ~19h weekend actually displaces (about 2.25 weekdays) rather than overshooting it and running
+ * every weekend-covering month a day short of the monthly target. */
+export const FT_SHORT_WEEK_REDUCTION = 1;
 
 /** The week right after covering the weekend gets this many fewer weekday shifts too, trimmed
  * from its very start (Monday) - since the weekend person now works straight through Friday into
