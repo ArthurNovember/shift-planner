@@ -732,6 +732,27 @@ export function generateSchedule(
         return true;
       };
 
+      // Monday only ever has a single morning shift, no afternoon at all - structured the same
+      // way weekends/holidays already are (one shift kind instead of a morning/afternoon split),
+      // while still counting as a completely normal weekday for day-count/target purposes.
+      // Whoever's working today piles onto that one morning shift together instead of splitting -
+      // there's no afternoon left to split into.
+      if (d.getDay() === 1) {
+        working.forEach((emp) => {
+          const fixedKind = fixedKindFor(emp.id);
+          if (fixedKind) {
+            ftTakenSlots.add(`${iso}-${fixedKind}`);
+            return;
+          }
+          if (!canWork(emp, 'morning')) return;
+          assignments.push({ date: iso, employeeId: emp.id, shift: SHIFTS.fulltime.morning });
+          ftTakenSlots.add(`${iso}-morning`);
+        });
+        if (!ftTakenSlots.has(`${iso}-morning`)) gaps.push({ date: iso, kind: 'morning' });
+        ftFlipCounter++;
+        return;
+      }
+
       if (working.length >= 2) {
         const [first, second] = working;
         const firstFixedKind = fixedKindFor(first.id);
@@ -908,7 +929,14 @@ export function generateSchedule(
     // fulltime isn't already covering that afternoon (a genuine gap). Mornings may overlap,
     // since fulltime + part-time together during the morning is welcome extra support.
     if (kind === 'afternoon' && ftTakenSlots.has(`${date}-afternoon`)) return false;
-    const shiftHours = SHIFTS.parttime[kind].hours;
+    // Monday has no afternoon shift at all (see the fulltime assignment above), so whoever fills
+    // its morning gap is the *only* coverage the day gets - a plain 4h part-time shift would leave
+    // the back half of the day with nobody there, so this stands in with the full 8h shift
+    // instead, same as covering for fulltime would be, rather than the usual 4h support shift.
+    const [gapYear, gapMonth, gapDay] = date.split('-').map(Number);
+    const isMorningOnlyDay = kind === 'morning' && new Date(gapYear, gapMonth - 1, gapDay).getDay() === 1;
+    const shift = isMorningOnlyDay ? SHIFTS.fulltime.morning : SHIFTS.parttime[kind];
+    const shiftHours = shift.hours;
     // Nobody ever works both a morning and an afternoon shift the same day - the two don't even
     // border each other (13:00-16:00 gap), so covering both would mean working nearly the whole
     // day. This is a hard rule with no last-resort exception: if the only role-eligible,
@@ -934,7 +962,7 @@ export function generateSchedule(
       if (aExtends !== bExtends) return aExtends - bExtends;
       return (ptHours.get(a.id) ?? 0) - (ptHours.get(b.id) ?? 0);
     })[0];
-    assignments.push({ date, employeeId: chosen.id, shift: SHIFTS.parttime[kind] });
+    assignments.push({ date, employeeId: chosen.id, shift });
     ptTakenSlots.add(slotKey);
     ptHours.set(chosen.id, (ptHours.get(chosen.id) ?? 0) + shiftHours);
     ptDatesWorked.get(chosen.id)!.add(date);
@@ -951,6 +979,17 @@ export function generateSchedule(
   //     still depends on their running hour total - once they're at the ~80h cap, further
   //     available days are simply left off instead of forced. ---
   if (parttime.length > 0 && ptLongShortWeek) {
+    const eightHours = SHIFTS.fulltime.morning.hours;
+    const fourHours = SHIFTS.parttime.morning.hours;
+
+    // Phase 1: each part-timer's role days and their own most efficient 8h/4h split, computed
+    // independently from their own role/availability/hours-so-far - as many full 8h days as the
+    // remaining budget allows while still covering every role day, converting only as many of
+    // them into 4h pairs as strictly necessary to reach the last day or two (not more - splitting
+    // further than needed both wastes part of the budget and needlessly costs 8h shifts, since
+    // 2*4h already equals 1*8h in hours either way).
+    type PtRolePlan = { emp: Employee; roleDays: Date[]; eightCount: number; fourCount: number };
+    const plans: PtRolePlan[] = [];
     parttime.forEach((emp) => {
       // Every day this employee's role allows them to work this month, in date order.
       const roleDays: Date[] = [];
@@ -966,26 +1005,36 @@ export function generateSchedule(
       });
       if (roleDays.length === 0) return;
 
-      // Aim for full 8h days first - like standing in for fulltime for the day - instead of
-      // defaulting every role day to 4h and upgrading some later: fewer, longer support shifts for
-      // the same monthly total, and a similar count of each between the two part-timers since both
-      // work from the same target. But when the 8h-first count would leave some role days with no
-      // shift at all despite the budget covering their hours in aggregate, split enough of the
-      // planned 8h days into pairs of 4h days to reach every role day instead - same total hours,
-      // just spread over more of the days this person's role actually makes them available, rather
-      // than an available day going completely uncovered (e.g. leaving only one person on the
-      // morning that day) purely because the day count didn't divide evenly into 8h chunks.
       const budget = Math.max(0, effectivePtCap(emp.id) - (ptHours.get(emp.id) ?? 0));
-      let eightCount = Math.min(roleDays.length, Math.floor(budget / SHIFTS.fulltime.morning.hours));
-      const remainder = budget - eightCount * SHIFTS.fulltime.morning.hours;
-      const splits = Math.max(0, Math.min(eightCount, roleDays.length - eightCount));
-      eightCount -= splits;
-      let fourCount = splits * 2;
-      // Whatever budget is left over after that (less than one more 8h day) can still add one more
-      // 4h day on top, same as before.
-      if (eightCount + fourCount < roleDays.length && remainder >= SHIFTS.parttime.morning.hours) {
-        fourCount += 1;
-      }
+      const workedCount = Math.min(roleDays.length, Math.floor(budget / fourHours));
+      const eightCount = Math.max(
+        0,
+        Math.min(workedCount, Math.floor((budget - workedCount * fourHours) / (eightHours - fourHours))),
+      );
+      plans.push({ emp, roleDays, eightCount, fourCount: workedCount - eightCount });
+    });
+
+    // Phase 2: fairness pass. A part-timer with a noticeably smaller remaining budget than their
+    // partner going into phase 1 - typically because fulltime-gap coverage, which is role-locked
+    // to specific weekdays, happened to land more often on *their* role days that particular
+    // month, nothing either of them chose - would otherwise end up with far fewer 8h "big" shifts
+    // even though phase 1 treated them identically. Trade some of the lower person's day coverage
+    // back for parity: merging a pair of already-planned 4h days into one 8h day is budget-neutral
+    // (2*4h = 1*8h) and only costs one fewer role day actually getting a shift, so it's a cheap
+    // way to close the gap without pushing anyone over their own cap. Stops within 1 of whoever
+    // has the most, rather than forcing exact equality, since closing the last bit of the gap can
+    // cost several days of coverage for very little fairness gained.
+    if (plans.length > 1) {
+      const maxEightCount = Math.max(...plans.map((p) => p.eightCount));
+      plans.forEach((p) => {
+        while (p.eightCount < maxEightCount - 1 && p.fourCount >= 2) {
+          p.fourCount -= 2;
+          p.eightCount += 1;
+        }
+      });
+    }
+
+    plans.forEach(({ emp, roleDays, eightCount, fourCount }) => {
       const workedCount = eightCount + fourCount;
       if (workedCount === 0) return;
 
@@ -1007,16 +1056,27 @@ export function generateSchedule(
         // with almost no afternoons at all. Only defaults to morning once neither of those apply,
         // which is also the more useful shape (two people in the morning, one in the afternoon)
         // on an otherwise fully-covered day.
+        // Monday has no afternoon at all (see the fulltime assignment above) - morning only,
+        // regardless of what the gap/pacing logic below would otherwise pick.
+        const isMorningOnlyDay = roleDays[pos].getDay() === 1;
         const gapKindsThisDate = new Set(gaps.filter((g) => g.date === iso).map((g) => g.kind));
         const afternoonIsGap = gapKindsThisDate.has('afternoon') && !gapKindsThisDate.has('morning');
         const afternoonFree = !ftTakenSlots.has(`${iso}-afternoon`) && !ptTakenSlots.has(`${iso}-afternoon`);
         const dueForAfternoon = afternoonCountSoFar(emp.id) < afternoonPaceTarget(iso);
         const kind: 'morning' | 'afternoon' =
-          afternoonIsGap || (afternoonFree && dueForAfternoon) ? 'afternoon' : 'morning';
+          !isMorningOnlyDay && (afternoonIsGap || (afternoonFree && dueForAfternoon)) ? 'afternoon' : 'morning';
         if (ptTakenSlots.has(`${iso}-${kind}`)) return;
         if (isUnavailableForKind(emp.id, iso, kind)) return;
-        const shift = i < eightCount ? SHIFTS.fulltime[kind] : SHIFTS.parttime[kind];
-        if ((ptHours.get(emp.id) ?? 0) + shift.hours > effectivePtCap(emp.id)) return;
+        // On Monday, this employee's own role is the only one that permits the date at all (heavy
+        // and light roles never share a weekday), so if fulltime isn't already there, they're the
+        // sole coverage for the day - the same "at least one full 8h shift" requirement as
+        // assignPtSlot's own gap-filling, applied here since this loop bypasses that function
+        // entirely. Overrides the usual eightCount-ranked 8h/4h split for this one slot, and (like
+        // that same last-resort logic) skips the cap check too - actual coverage matters more than
+        // a slightly-missed monthly cap, which still surfaces via the normal over-cap warning.
+        const isSoleCoverage = isMorningOnlyDay && !ftTakenSlots.has(`${iso}-morning`);
+        const shift = isSoleCoverage || i < eightCount ? SHIFTS.fulltime[kind] : SHIFTS.parttime[kind];
+        if (!isSoleCoverage && (ptHours.get(emp.id) ?? 0) + shift.hours > effectivePtCap(emp.id)) return;
         assignments.push({ date: iso, employeeId: emp.id, shift });
         ptTakenSlots.add(`${iso}-${kind}`);
         ptHours.set(emp.id, (ptHours.get(emp.id) ?? 0) + shift.hours);
@@ -1071,10 +1131,13 @@ export function generateSchedule(
       // Friday leading into a weekend they cover - and the afternoon slot is actually free, take
       // that instead. Otherwise a part-timer's afternoons stay near zero forever, since
       // gap-filling is the only other place they'd ever get one.
+      // Monday has no afternoon at all (see the fulltime assignment above) - morning is the only
+      // option, full stop, regardless of how overdue this person is for an afternoon elsewhere.
       const afternoonFree = !ftTakenSlots.has(`${iso}-afternoon`) && !ptTakenSlots.has(`${iso}-afternoon`);
       const hasWeekendThisWeek = day.getDay() === 5 && isShortWeek(emp.id, toISODate(mondayOf(day)));
       const dueForAfternoon = hasWeekendThisWeek || afternoonCountSoFar(emp.id) < afternoonPaceTarget(iso);
-      const kind: 'morning' | 'afternoon' = afternoonFree && dueForAfternoon ? 'afternoon' : 'morning';
+      const kind: 'morning' | 'afternoon' =
+        day.getDay() !== 1 && afternoonFree && dueForAfternoon ? 'afternoon' : 'morning';
       if (isUnavailableForKind(emp.id, iso, kind)) return false;
       if (wouldExtendStreakTooFar(emp.id, day.getDate())) return false;
       const shift = hours === 8 ? SHIFTS.fulltime[kind] : SHIFTS.parttime[kind];
@@ -1490,7 +1553,9 @@ export function computeWarnings(
     if (!hasMorning) {
       warnings.push({ type: 'coverage-gap', date: iso, message: `${iso}: chybí pokrytí ranní směny.` });
     }
-    if (!hasAfternoon) {
+    // Monday deliberately has no afternoon shift at all (see the generator's fulltime
+    // assignment) - nothing is ever expected there, so there's nothing missing to flag.
+    if (!hasAfternoon && dow !== 1) {
       warnings.push({ type: 'coverage-gap', date: iso, message: `${iso}: chybí pokrytí odpolední směny.` });
     }
   }

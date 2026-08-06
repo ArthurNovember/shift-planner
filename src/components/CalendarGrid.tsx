@@ -50,10 +50,14 @@ function dayInfo(year: number, month: number, day: number, holidays: Map<string,
 }
 
 /** The shift kind(s) a day's column is split into: a plain weekday has a separate morning and
- * afternoon slot, while weekend/holiday days only ever have one whole-day shift. */
+ * afternoon slot, while weekend/holiday days only ever have one whole-day shift. Monday is the
+ * same single-column shape as a weekend/holiday for the same reason - it never has an afternoon
+ * shift at all (see the generator), just a morning one, so there's nothing to split into an R/O
+ * pair. */
 function kindsFor(info: DayInfo): ShiftDefinition['kind'][] {
   if (info.isWeekend) return ['weekend'];
   if (info.isHoliday) return ['holiday'];
+  if (info.dow === 1) return ['morning'];
   return ['morning', 'afternoon'];
 }
 

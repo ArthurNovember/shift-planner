@@ -55,7 +55,9 @@ interface DayColumn {
   weekdayLabel: string;
   isWeekend: boolean;
   isHoliday: boolean;
-  /** A plain weekday gets its own morning+afternoon slot; weekend/holiday is one whole-day slot. */
+  /** A plain weekday gets its own morning+afternoon slot; weekend/holiday is one whole-day slot.
+   * Monday is the same single-slot shape - it never has an afternoon shift at all (see the
+   * generator), just a morning one. */
   kinds: ShiftDefinition['kind'][];
 }
 
@@ -75,7 +77,7 @@ function buildDayColumns(year: number, month: number): DayColumn[] {
       weekdayLabel: WEEKDAY_LABELS[(dow + 6) % 7],
       isWeekend,
       isHoliday,
-      kinds: isWeekend ? ['weekend'] : isHoliday ? ['holiday'] : ['morning', 'afternoon'],
+      kinds: isWeekend ? ['weekend'] : isHoliday ? ['holiday'] : dow === 1 ? ['morning'] : ['morning', 'afternoon'],
     });
   }
   return columns;
