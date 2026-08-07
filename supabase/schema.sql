@@ -42,11 +42,21 @@ create table if not exists schedule_history_state (
   constraint schedule_history_state_singleton check (id = 1)
 );
 
+-- employeeId -> ISO date -> vacation hours logged that day (typed as e.g. "-8" into the schedule
+-- cell). Reduces that employee's effective monthly target/cap by the logged amount.
+create table if not exists vacation_state (
+  id int primary key default 1,
+  data jsonb not null,
+  updated_at timestamptz not null default now(),
+  constraint vacation_state_singleton check (id = 1)
+);
+
 alter table employees_state enable row level security;
 alter table schedules_state enable row level security;
 alter table unavailability_state enable row level security;
 alter table dismissed_warnings_state enable row level security;
 alter table schedule_history_state enable row level security;
+alter table vacation_state enable row level security;
 
 create policy "authenticated only" on employees_state
   for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
@@ -61,4 +71,7 @@ create policy "authenticated only" on dismissed_warnings_state
   for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
 
 create policy "authenticated only" on schedule_history_state
+  for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');
+
+create policy "authenticated only" on vacation_state
   for all using (auth.role() = 'authenticated') with check (auth.role() = 'authenticated');

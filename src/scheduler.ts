@@ -1,14 +1,13 @@
-import type { Assignment, Employee, ScheduleOptions, ScheduleWarning, ShiftDefinition, UnavailabilityMap } from './types';
+import type { Assignment, Employee, ScheduleOptions, ScheduleWarning, ShiftDefinition, UnavailabilityMap, VacationMap } from './types';
 import {
   FT_POST_WEEKEND_RECOVERY_DAYS,
   FT_SHORT_WEEK_REDUCTION,
   FT_TOGETHER_CHANCE,
   FULLTIME_HOURS_TOLERANCE,
-  FULLTIME_TARGET_HOURS,
   HOLIDAY_SHIFT,
   MAX_CONSECUTIVE_SHIFTS,
-  PARTTIME_MONTHLY_CAP,
   SHIFTS,
+  vacationEntryHours,
   WEEKEND_SHIFT,
 } from './types';
 import { getClosedDays, getCzechHolidays } from './holidays';
@@ -40,6 +39,38 @@ export function daysInMonth(year: number, month: number): number {
   return new Date(year, month + 1, 0).getDate();
 }
 
+/** The Czech "fond pracovní doby" day count: Monday-Friday days in the month minus public
+ * holidays landing on one (weekends and holidays were never workable to begin with, so they
+ * don't belong in a working-hours fund) - also minus outright-closed days (Christmas Eve, New
+ * Year's Eve), which aren't a statutory holiday but are just as unworkable, and counting them
+ * would create the same "target exceeds what's actually achievable" gap a statutory holiday
+ * would. Multiplying by a shift's daily hours gives that month's own fulltime target, rather than
+ * a single fixed number every month is measured against regardless of how many business days it
+ * actually had. */
+export function businessDaysInMonth(year: number, month: number, holidays: Map<string, string>, closedDays: Set<string>): number {
+  const totalDays = daysInMonth(year, month);
+  let count = 0;
+  for (let day = 1; day <= totalDays; day++) {
+    const d = new Date(year, month, day);
+    const dow = d.getDay();
+    if (dow === 0 || dow === 6) continue;
+    const iso = toISODate(d);
+    if (holidays.has(iso) || closedDays.has(iso)) continue;
+    count++;
+  }
+  return count;
+}
+
+/** Total vacation hours an employee logged within a given calendar month - subtracted from their
+ * target/cap for that month, rather than the generator/warnings quietly treating hours vacation
+ * already took a bite out of as an unexplained shortfall. */
+function vacationHoursInMonth(vacation: VacationMap, empId: string, year: number, month: number): number {
+  const days = vacation[empId];
+  if (!days) return 0;
+  const prefix = `${year}-${pad(month + 1)}`;
+  return Object.entries(days).reduce((sum, [iso, entry]) => (iso.startsWith(prefix) ? sum + vacationEntryHours(entry) : sum), 0);
+}
+
 function mondayOf(d: Date): Date {
   const dow = (d.getDay() + 6) % 7; // Monday = 0
   const monday = new Date(d);
@@ -69,6 +100,7 @@ export function generateSchedule(
   month: number,
   employees: Employee[],
   unavailability: UnavailabilityMap = {},
+  vacation: VacationMap = {},
   options: ScheduleOptions = {},
   previousAssignments: Assignment[] = [],
   existingAssignments: Assignment[] = [],
@@ -121,40 +153,92 @@ export function generateSchedule(
   // week they land on.
   const closedDays = getClosedDays(year);
 
-  /** This month's fulltime target, nudged opposite last month's miss (over last time -> a bit
-   * lower this time, and vice versa) so a two-month pair averages back toward the nominal 160h
-   * instead of each month independently landing wherever its own week/weekend structure allows.
-   * Deliberately gentle (a fraction of the miss, tightly clamped): a large one-off deviation (a
-   * forced second weekend in a 5-Saturday month, heavy unavailability) is a genuine anomaly that
-   * should get flagged by the warning above, not fully cancelled out by an equally large swing
-   * the other way, which would just turn one bad month into two. */
+  // This month's own fulltime target, straight off its "fond pracovní doby" business-day count
+  // (see businessDaysInMonth) rather than a flat number every month is measured against
+  // regardless of how many business days it actually had - a holiday-heavy month or one that
+  // starts/ends mid-week gets a correspondingly lower target instead of the generator chasing a
+  // fixed 160h it was never going to reach. Part-time's nominal cap is exactly half of it, same
+  // as the fixed 80/160 split it replaces.
+  const monthlyFulltimeTargetHours = businessDaysInMonth(year, month, holidays, closedDays) * SHIFTS.fulltime.morning.hours;
+  const monthlyParttimeCapHours = monthlyFulltimeTargetHours / 2;
+
+  // The previous month's *own* target/cap, not this one's - business-day counts vary from month
+  // to month on their own, so measuring last month's actual hours against *this* month's target
+  // would read the ordinary swing between e.g. a 20-business-day month and a 22-day one as a
+  // "miss" to compensate for, even when the employee hit last month's own target exactly.
+  // Inferred from the calendar month of `previousAssignments` itself (any date in it) rather than
+  // assumed to be this month minus one, so a caller that skips a month or passes an out-of-order
+  // history still gets compared against the month that hours were actually earned in.
+  const previousMonthDate = previousAssignments[0]?.date;
+  const previousMonthInfo = (() => {
+    if (!previousMonthDate) return { year, month };
+    const [prevYear, prevMonthNum] = previousMonthDate.split('-').map(Number);
+    return { year: prevYear, month: prevMonthNum - 1 };
+  })();
+  const previousMonthTargetHoursBase = (() => {
+    if (!previousMonthDate) return monthlyFulltimeTargetHours;
+    const prevHolidays = previousMonthInfo.year === year ? holidays : getCzechHolidays(previousMonthInfo.year);
+    const prevClosedDays = previousMonthInfo.year === year ? closedDays : getClosedDays(previousMonthInfo.year);
+    return (
+      businessDaysInMonth(previousMonthInfo.year, previousMonthInfo.month, prevHolidays, prevClosedDays) *
+      SHIFTS.fulltime.morning.hours
+    );
+  })();
+
+  /** This month's fulltime target, nudged opposite last month's miss against *its own*
+   * vacation-adjusted target (over last time -> a bit lower this time, and vice versa) so a
+   * two-month pair averages back toward the nominal target instead of each month independently
+   * landing wherever its own week/weekend structure allows. Deliberately gentle (a fraction of
+   * the miss, tightly clamped): a large one-off deviation (a forced second weekend in a
+   * 5-Saturday month, heavy unavailability) is a genuine anomaly that should get flagged by the
+   * warning above, not fully cancelled out by an equally large swing the other way, which would
+   * just turn one bad month into two. */
   function effectiveFulltimeTarget(empId: string): number {
+    const target = monthlyFulltimeTargetHours - vacationHoursInMonth(vacation, empId, year, month);
     const previous = previousHoursByEmployee.get(empId);
-    if (previous === undefined) return FULLTIME_TARGET_HOURS;
-    const miss = previous - FULLTIME_TARGET_HOURS;
-    return clamp(FULLTIME_TARGET_HOURS - miss * 0.3, FULLTIME_TARGET_HOURS - 8, FULLTIME_TARGET_HOURS + 8);
+    if (previous === undefined) return target;
+    const previousMonthTarget =
+      previousMonthTargetHoursBase - vacationHoursInMonth(vacation, empId, previousMonthInfo.year, previousMonthInfo.month);
+    const miss = previous - previousMonthTarget;
+    return clamp(target - miss * 0.3, target - 8, target + 8);
   }
 
-  /** Unlike fulltime's two-sided target, part-time's ~80h is a ceiling, never a floor - landing
+  /** Unlike fulltime's two-sided target, part-time's cap is a ceiling, never a floor - landing
    * under it any given month (whether from "long/short week"'s lighter weeks, unavailability, or
-   * anything else) is always fine and never something to chase by pushing past 80h later. Only
+   * anything else) is always fine and never something to chase by pushing past it later. Only
    * compensate in the one direction that matches the original "soft cap, carries over" idea: if
-   * they went over last month (only mandatory fulltime-gap coverage should ever cause that), this
-   * month's effective cap comes down to average back toward 80h. */
+   * they went over last month's own cap (only mandatory fulltime-gap coverage should ever cause
+   * that), this month's effective cap comes down to average back toward the nominal one. */
   function effectivePtCap(empId: string): number {
+    const cap = monthlyParttimeCapHours - vacationHoursInMonth(vacation, empId, year, month);
     const previous = previousHoursByEmployee.get(empId);
-    if (previous === undefined || previous <= PARTTIME_MONTHLY_CAP) return PARTTIME_MONTHLY_CAP;
-    return clamp(2 * PARTTIME_MONTHLY_CAP - previous, PARTTIME_MONTHLY_CAP - 30, PARTTIME_MONTHLY_CAP);
+    const previousMonthCap =
+      previousMonthTargetHoursBase / 2 - vacationHoursInMonth(vacation, empId, previousMonthInfo.year, previousMonthInfo.month);
+    if (previous === undefined || previous <= previousMonthCap) return cap;
+    const over = previous - previousMonthCap;
+    return clamp(cap - over, cap - 30, cap);
   }
 
-  /** Whether this employee is specifically marked unavailable for one weekday shift kind. */
+  /** Whether this employee logged vacation on this date - a whole-day concept (see VacationMap),
+   * so it blocks both weekday kinds at once rather than one at a time like a regular
+   * unavailability mark can. */
+  function isOnVacation(employeeId: string, iso: string): boolean {
+    return vacationEntryHours(vacation[employeeId]?.[iso]) > 0;
+  }
+
+  /** Whether this employee is specifically marked unavailable for one weekday shift kind -
+   * either a regular unavailability mark for that one kind, or vacation, which blocks the whole
+   * day. */
   function isUnavailableForKind(employeeId: string, iso: string, kind: 'morning' | 'afternoon'): boolean {
+    if (isOnVacation(employeeId, iso)) return true;
     return unavailability[employeeId]?.[iso]?.has(kind) ?? false;
   }
 
   /** Whether this employee can't work at all that day - both weekday kinds blocked (or, for a
-   * weekend date, the single day-off mark, which the UI always sets on both kinds together). */
+   * weekend date, the single day-off mark, which the UI always sets on both kinds together), or
+   * on vacation that day. */
   function isUnavailable(employeeId: string, iso: string): boolean {
+    if (isOnVacation(employeeId, iso)) return true;
     const marks = unavailability[employeeId]?.[iso];
     return !!marks && marks.has('morning') && marks.has('afternoon');
   }
@@ -792,25 +876,22 @@ export function generateSchedule(
         // The two ways to split the day: first on mornings + second on afternoons, or reversed.
         const splitFirstMorning = firstM && secondA;
         const splitSecondMorning = secondM && firstA;
-        // A kind both of them could plausibly work together, for the "together" chance below.
-        const togetherKind: 'morning' | 'afternoon' | null =
-          firstM && secondM && firstA && secondA
-            ? Math.random() < 0.5
-              ? 'morning'
-              : 'afternoon'
-            : firstM && secondM
-              ? 'morning'
-              : firstA && secondA
-                ? 'afternoon'
-                : null;
+        // Whoever covers the weekend right after this week should lead straight into it with
+        // Friday afternoon - a hard preference, not a coin flip, so it must never be skipped by
+        // the "together" roll below landing on this exact Friday.
+        const firstHasWeekend = isFriday && isShortWeek(first.id, weekKey);
+        const secondHasWeekend = isFriday && isShortWeek(second.id, weekKey);
+        // Only "morning" is ever a valid together-kind - afternoon has exactly one person on duty,
+        // full stop (same rule part-time's own gap-filling respects), so the two of them taking it
+        // together would put two people on a slot that's only ever supposed to hold one.
+        const togetherKind: 'morning' | null = firstM && secondM ? 'morning' : null;
 
-        if (togetherKind && Math.random() < FT_TOGETHER_CHANCE) {
-          // Both take the same shift together; the other shift becomes a gap for part-time to cover.
-          const gapKind = togetherKind === 'morning' ? 'afternoon' : 'morning';
+        if (togetherKind && !firstHasWeekend && !secondHasWeekend && Math.random() < FT_TOGETHER_CHANCE) {
+          // Both take the morning together; the afternoon becomes a gap for part-time to cover.
           assignments.push({ date: iso, employeeId: first.id, shift: SHIFTS.fulltime[togetherKind] });
           assignments.push({ date: iso, employeeId: second.id, shift: SHIFTS.fulltime[togetherKind] });
           ftTakenSlots.add(`${iso}-${togetherKind}`);
-          gaps.push({ date: iso, kind: gapKind });
+          gaps.push({ date: iso, kind: 'afternoon' });
         } else if (splitFirstMorning && splitSecondMorning) {
           // Either split works. On a Friday, whoever covers the weekend right after it takes
           // priority for the afternoon - that's the one case this overrides the usual fairness
@@ -820,8 +901,6 @@ export function generateSchedule(
           // whichever side the flip counter happens to favor over a run of similar days. Ties
           // (most likely early in the month, before either has any afternoons yet) fall back to
           // the flip counter for variety.
-          const firstHasWeekend = isFriday && isShortWeek(first.id, weekKey);
-          const secondHasWeekend = isFriday && isShortWeek(second.id, weekKey);
           const firstAfternoons = afternoonCountSoFar(first.id);
           const secondAfternoons = afternoonCountSoFar(second.id);
           const afternoonEmp = firstHasWeekend
@@ -1431,6 +1510,7 @@ export function computeWarnings(
   employees: Employee[],
   assignments: Assignment[],
   unavailability: UnavailabilityMap = {},
+  vacation: VacationMap = {},
 ): ScheduleWarning[] {
   if (assignments.length === 0) return [];
   const warnings: ScheduleWarning[] = [];
@@ -1438,6 +1518,11 @@ export function computeWarnings(
   const employeeById = new Map(employees.map((e) => [e.id, e]));
   const holidays = getCzechHolidays(year);
   const closedDays = getClosedDays(year);
+  // Same "fond pracovní doby" business-day target the generator itself worked from - warnings
+  // need to measure against this month's own target, not a flat number, for the same reason the
+  // generator does.
+  const monthlyFulltimeTargetHours = businessDaysInMonth(year, month, holidays, closedDays) * SHIFTS.fulltime.morning.hours;
+  const monthlyParttimeCapHours = monthlyFulltimeTargetHours / 2;
 
   // Informational reminder whenever someone has a shift on a public holiday - whether it's the
   // generator's own intentional single skeleton-crew assignment or a manually added extra one.
@@ -1492,12 +1577,13 @@ export function computeWarnings(
     .filter((e) => e.type === 'parttime')
     .forEach((emp) => {
       const hours = hoursByEmployee.get(emp.id) ?? 0;
-      if (hours > PARTTIME_MONTHLY_CAP) {
-        const over = hours - PARTTIME_MONTHLY_CAP;
+      const cap = monthlyParttimeCapHours - vacationHoursInMonth(vacation, emp.id, year, month);
+      if (hours > cap) {
+        const over = hours - cap;
         warnings.push({
           type: 'pt-hours-exceeded',
           employeeId: emp.id,
-          message: `${emp.name}: naplánováno ${hours.toFixed(1)} h, limit je ${PARTTIME_MONTHLY_CAP} h (přebytek ${over.toFixed(1)} h). Zvažte převod přebytku do dalšího měsíce.`,
+          message: `${emp.name}: naplánováno ${hours.toFixed(1)} h, limit je ${cap.toFixed(1)} h (přebytek ${over.toFixed(1)} h). Zvažte převod přebytku do dalšího měsíce.`,
         });
       }
     });
@@ -1513,18 +1599,19 @@ export function computeWarnings(
     .filter((e) => e.type === 'fulltime')
     .forEach((emp) => {
       const hours = hoursByEmployee.get(emp.id) ?? 0;
-      const deviation = hours - FULLTIME_TARGET_HOURS;
+      const target = monthlyFulltimeTargetHours - vacationHoursInMonth(vacation, emp.id, year, month);
+      const deviation = hours - target;
       if (deviation > FULLTIME_HOURS_TOLERANCE) {
         warnings.push({
           type: 'ft-hours-deviation',
           employeeId: emp.id,
-          message: `${emp.name}: naplánováno ${hours.toFixed(1)} h, limit je ${FULLTIME_TARGET_HOURS} h (přebytek ${deviation.toFixed(1)} h).`,
+          message: `${emp.name}: naplánováno ${hours.toFixed(1)} h, limit je ${target.toFixed(1)} h (přebytek ${deviation.toFixed(1)} h).`,
         });
       } else if (-deviation > FULLTIME_HOURS_TOLERANCE) {
         warnings.push({
           type: 'ft-hours-deviation',
           employeeId: emp.id,
-          message: `${emp.name}: naplánováno ${hours.toFixed(1)} h, cíl je ${FULLTIME_TARGET_HOURS} h (chybí ${(-deviation).toFixed(1)} h) - obvykle kvůli nedostupnosti nebo krátkému měsíci.`,
+          message: `${emp.name}: naplánováno ${hours.toFixed(1)} h, cíl je ${target.toFixed(1)} h (chybí ${(-deviation).toFixed(1)} h) - obvykle kvůli nedostupnosti nebo krátkému měsíci.`,
         });
       }
     });

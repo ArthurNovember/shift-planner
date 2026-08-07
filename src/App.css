@@ -945,6 +945,15 @@ select {
   font-size: 14px;
 }
 
+/* The limit sits right after the total, inside the same sticky cell - a second independently
+   sticky column here previously misaligned the moment its content was wider than guessed, and
+   ended up overlapping real shift cells while scrolled. */
+.schedule-limit-value {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 12px;
+}
+
 .schedule-cell {
   display: block;
   width: 100%;
@@ -979,6 +988,15 @@ select {
    reads as "off" rather than competing with the weekend/holiday/afternoon tints for attention. */
 .schedule-cell.unavailable {
   background: rgba(100, 116, 139, 0.35);
+}
+
+/* A vacation cell gets its own distinct fill (violet) rather than reusing the plain "unavailable"
+   gray - it's a deliberate, planned absence that also affects the monthly target, not just an
+   ordinary day someone happens to be unavailable, so it reads differently at a glance. */
+.schedule-cell.vacation {
+  background: var(--vacation-fill);
+  color: #ffffff;
+  font-weight: 700;
 }
 
 /* A gold ring, not a fill, so it layers cleanly over whatever background (afternoon blue,

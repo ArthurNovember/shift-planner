@@ -75,14 +75,6 @@ export const WEEKEND_SHIFT: ShiftDefinition = { kind: 'weekend', start: '10:15',
 // the usual full morning+afternoon coverage.
 export const HOLIDAY_SHIFT: ShiftDefinition = { kind: 'holiday', start: '09:00', end: '17:30', hours: 8, breakMinutes: 30 };
 
-/** Target and soft cap for part-time monthly hours: the generator fills shifts up to this total. */
-export const PARTTIME_MONTHLY_CAP = 80;
-
-/** Target monthly hours for a fulltime employee - the generator works backwards from this
- * to decide how many days a week they need, so the total lands close to it every month
- * regardless of how many weekdays/weekends that particular month happens to have. */
-export const FULLTIME_TARGET_HOURS = 160;
-
 /** How far over the fulltime target actual monthly hours may go before it's flagged - the
  * generator only balances to the day (8.5h chunks), so up to about half a day either way is
  * normal rounding, not a problem. Anything past this is a genuine anomaly (a forced second
@@ -122,6 +114,35 @@ export type AvailabilityKind = 'morning' | 'afternoon';
 
 /** employeeId -> ISO date -> set of shift kinds that employee cannot work that day. */
 export type UnavailabilityMap = Record<string, Record<string, Set<AvailabilityKind>>>;
+
+/** employeeId -> ISO date -> vacation hours logged that day, and which cell (morning/afternoon)
+ * it was typed into - typed as a negative number (e.g. "-8") straight into the same schedule cell
+ * that would otherwise hold worked hours, there's no separate "vacation mode", just the sign of
+ * what gets typed. `kind` only decides which single cell displays the entry (a whole vacation day
+ * shown on both would look like two separate shifts) - the scheduling effect itself still blocks
+ * the entire day (there's no "half a day of vacation" concept, unlike morning/afternoon
+ * unavailability) and reduces that employee's effective monthly target/cap by the logged amount,
+ * rather than the generator/warnings treating the missing hours as an unexplained shortfall. */
+export type VacationMap = Record<string, Record<string, { hours: number; kind: 'morning' | 'afternoon' }>>;
+
+/** Reads the hours back out of a VacationMap entry defensively - `vacation` round-trips through
+ * Supabase as plain JSON, an external-storage boundary that could still hold a bare-number entry
+ * from before `kind` was tracked (an earlier shape of this same type), so this tolerates that
+ * shape too instead of every reader silently producing NaN on it forever after. */
+export function vacationEntryHours(entry: unknown): number {
+  if (typeof entry === 'number') return Number.isFinite(entry) ? entry : 0;
+  const hours = (entry as { hours?: unknown } | undefined)?.hours;
+  return typeof hours === 'number' && Number.isFinite(hours) ? hours : 0;
+}
+
+/** Which cell a VacationMap entry displays on - defaults to "morning" for a legacy bare-number
+ * entry (or anything else without a recognizable kind) that predates `kind` being tracked at all,
+ * so it still shows up *somewhere* and can be seen and cleared through the table instead of
+ * silently blocking a day with nothing in the UI to click. */
+export function vacationEntryKind(entry: unknown): 'morning' | 'afternoon' {
+  const kind = (entry as { kind?: unknown } | undefined)?.kind;
+  return kind === 'afternoon' ? 'afternoon' : 'morning';
+}
 
 export interface ScheduleOptions {
   /** "Long/short week": each week, one part-timer gets a "heavy" role (available Mon/Tue/Fri)

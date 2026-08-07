@@ -5,6 +5,7 @@ import type {
   Employee,
   ShiftDefinition,
   UnavailabilityMap,
+  VacationMap,
 } from "./types";
 import { HOLIDAY_SHIFT, SHIFTS, WEEKEND_SHIFT } from "./types";
 import { computeWarnings, generateSchedule, toISODate } from "./scheduler";
@@ -23,6 +24,7 @@ import {
   loadShowIcsExport,
   loadTheme,
   loadUnavailability,
+  loadVacation,
   markHistorySeen,
   monthKey,
   saveDismissedWarnings,
@@ -32,6 +34,7 @@ import {
   saveShowIcsExport,
   saveTheme,
   saveUnavailability,
+  saveVacation,
 } from "./storage";
 import { supabase } from "./supabaseClient";
 import { LoginGate } from "./components/LoginGate";
@@ -84,6 +87,7 @@ function AppContent() {
   const [month, setMonth] = useState(today.getMonth());
   const [schedules, setSchedules] = useState<SchedulesMap>({});
   const [unavailability, setUnavailability] = useState<UnavailabilityMap>({});
+  const [vacation, setVacation] = useState<VacationMap>({});
   const [dismissedWarnings, setDismissedWarnings] = useState<DismissedWarningsMap>({});
   const [history, setHistory] = useState<HistoryMap>({});
   const [historySeen, setHistorySeen] = useState<HistorySeenMap>(() => loadHistorySeen());
@@ -134,10 +138,11 @@ function AppContent() {
             return;
           }
         }
-        const [emp, sched, unavail, dismissed, hist] = await Promise.all([
+        const [emp, sched, unavail, vac, dismissed, hist] = await Promise.all([
           loadEmployees(),
           loadSchedules(),
           loadUnavailability(),
+          loadVacation(),
           loadDismissedWarnings(),
           loadHistory(),
         ]);
@@ -145,6 +150,7 @@ function AppContent() {
         setEmployees(emp);
         setSchedules(sched);
         setUnavailability(unavail);
+        setVacation(vac);
         setDismissedWarnings(dismissed);
         setHistory(hist);
         setLoaded(true);
@@ -186,6 +192,12 @@ function AppContent() {
   }, [unavailability, loaded]);
   useEffect(() => {
     if (!loaded) return;
+    saveVacation(vacation)
+      .then(() => setSaveError(false))
+      .catch(() => setSaveError(true));
+  }, [vacation, loaded]);
+  useEffect(() => {
+    if (!loaded) return;
     saveDismissedWarnings(dismissedWarnings)
       .then(() => setSaveError(false))
       .catch(() => setSaveError(true));
@@ -222,8 +234,8 @@ function AppContent() {
   }
 
   const allWarnings = useMemo(
-    () => computeWarnings(year, month, employees, assignments, unavailability),
-    [year, month, employees, assignments, unavailability],
+    () => computeWarnings(year, month, employees, assignments, unavailability, vacation),
+    [year, month, employees, assignments, unavailability, vacation],
   );
   const dismissedForMonth = useMemo(() => dismissedWarnings[key] ?? [], [dismissedWarnings, key]);
   const warnings = useMemo(
@@ -287,6 +299,7 @@ function AppContent() {
         month,
         employees,
         unavailability,
+        vacation,
         { ptLongShortWeek },
         previousAssignments,
         assignments,
@@ -420,6 +433,28 @@ function AppContent() {
         `Upravena směna: ${employee.name}, ${formatHistoryDay(date)} (${SHIFT_KIND_LABELS[kind]}) na ${hours} h${fixedSuffix}.`,
       );
     }
+  }
+
+  // Vacation is entered as a negative number in the same cell shift hours go in (see
+  // CalendarGrid/parseHoursInput) - 0 or a non-negative value clears it, since that means the
+  // user typed a real shift hours value or an empty cell there instead. `kind` is which cell
+  // (morning/afternoon) it was typed into, so the table only ever shows the entry on that one
+  // cell instead of both - the day is still fully blocked from scheduling either way.
+  function handleSetVacation(date: string, employeeId: string, hours: number, kind: "morning" | "afternoon") {
+    const employee = employees.find((e) => e.id === employeeId);
+    if (!employee) return;
+    setVacation((prev) => {
+      const employeeDays = { ...(prev[employeeId] ?? {}) };
+      if (hours <= 0) delete employeeDays[date];
+      else employeeDays[date] = { hours, kind };
+      return { ...prev, [employeeId]: employeeDays };
+    });
+    appendHistory(
+      key,
+      hours > 0
+        ? `Nastavena dovolená: ${employee.name}, ${formatHistoryDay(date)} (${hours} h).`
+        : `Zrušena dovolená: ${employee.name}, ${formatHistoryDay(date)}.`,
+    );
   }
 
   function handleWarningClick(date: string) {
@@ -560,8 +595,10 @@ function AppContent() {
           employees={employees}
           assignments={assignments}
           unavailability={unavailability}
+          vacation={vacation}
           onSetShiftHours={handleSetShiftHours}
           onToggleUnavailable={handleToggleUnavailable}
+          onSetVacation={handleSetVacation}
           highlightedDate={highlightedDate}
         />
       </div>

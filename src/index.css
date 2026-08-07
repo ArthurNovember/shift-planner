@@ -15,6 +15,7 @@
   --accent-bg: rgba(23, 182, 245, 0.14);
   --accent-border: rgba(23, 182, 245, 0.4);
   --afternoon-fill: rgb(0, 128, 179);
+  --vacation-fill: rgb(139, 92, 246);
   --shadow: rgba(2, 4, 12, 0.45) 0 16px 30px -18px;
 
   --input-bg: rgba(2, 5, 14, 0.5);
@@ -55,6 +56,7 @@
   --accent-bg: rgba(23, 182, 245, 0.12);
   --accent-border: rgba(23, 182, 245, 0.5);
   --afternoon-fill: rgb(23, 182, 245);
+  --vacation-fill: rgb(124, 58, 237);
   --shadow: rgba(30, 64, 110, 0.1) 0 16px 30px -18px;
 
   --input-bg: #f3f8fe;

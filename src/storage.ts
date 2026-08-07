@@ -1,4 +1,4 @@
-import type { Assignment, Employee, UnavailabilityMap } from './types';
+import type { Assignment, Employee, UnavailabilityMap, VacationMap } from './types';
 import { supabase } from './supabaseClient';
 
 const EMPLOYEES_KEY = 'shiftPlanner.employees';
@@ -139,6 +139,19 @@ export async function saveUnavailability(unavailability: UnavailabilityMap): Pro
   const { error } = await supabase
     .from('unavailability_state')
     .upsert({ id: 1, data: serializeUnavailability(unavailability), updated_at: new Date().toISOString() });
+  if (error) throw error;
+}
+
+export async function loadVacation(): Promise<VacationMap> {
+  const { data, error } = await supabase.from('vacation_state').select('data').eq('id', 1).maybeSingle();
+  if (error) throw error;
+  return (data?.data as VacationMap | undefined) ?? {};
+}
+
+export async function saveVacation(vacation: VacationMap): Promise<void> {
+  const { error } = await supabase
+    .from('vacation_state')
+    .upsert({ id: 1, data: vacation, updated_at: new Date().toISOString() });
   if (error) throw error;
 }
 
